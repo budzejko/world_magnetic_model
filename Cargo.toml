@@ -8,6 +8,7 @@ repository = "https://github.com/budzejko/world_magnetic_model"
 keywords = ["geomagnetic", "wmm", "declination"]
 categories = ["science::geo", "aerospace", "embedded", "no-std"]
 documentation = "https://docs.rs/world_magnetic_model/latest/"
+exclude = [".git*", "benches/", "build.rs", "ncei.noaa.gov/", "templates/"]
 
 [dependencies]
 uom = {version="0.36.0", default-features = false, features = ["si", "f32", "f64"] }
@@ -28,3 +29,11 @@ rinja = "0.3.5"
 [[bench]]
 name = "wmm"
 harness = false
+
+[[example]]
+name = "demo_today"
+path = "examples/demo_today.rs"
+
+[[example]]
+name = "demo_wmm2020_wmm2025"
+path = "examples/demo_wmm2020_wmm2025.rs"
