@@ -1,0 +1,15 @@
+use crate::wmm_models::WmmModel;
+
+#[rustfmt::skip]
+pub(crate) const WMM_MODELS: [WmmModel; {{ models.len() }}] = [
+    {%- for model in models %}
+    WmmModel {
+        model_version: {{ model.model_version }},
+        g_mfc: [{{ model.g_mfc| join("_f32, ") }}],
+        h_mfc: [{{ model.h_mfc| join("_f32, ") }}],
+        g_svc: [{{ model.g_svc| join("_f32, ") }}],
+        h_svc: [{{ model.h_svc| join("_f32, ") }}],
+    },
+    {%- endfor %}
+];
+

@@ -1,0 +1,9 @@
+[package]
+name = "world_magnetic_model_examples"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dev-dependencies]
+world_magnetic_model = { version = "0.1.0", path = "../" }

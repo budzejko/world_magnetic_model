@@ -1,0 +1,30 @@
+[package]
+name = "world_magnetic_model"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Rust implementation of the NOAA World Magnetic Model."
+repository = "https://github.com/budzejko/world_magnetic_model"
+keywords = ["geomagnetic", "wmm", "declination"]
+categories = ["science::geo", "aerospace", "embedded", "no-std"]
+documentation = "https://docs.rs/world_magnetic_model/latest/"
+
+[dependencies]
+uom = {version="0.36.0", default-features = false, features = ["si", "f32", "f64"] }
+time = {version="0.3.36", default-features = false}
+thiserror = {version="2.0.7", default-features = false}
+serde = { version = "1.0", optional = true, features = ["derive"] }
+libm = "0.2.11"
+
+[dev-dependencies]
+time = {version="0.3.36", default-features = false, features = ["local-offset"] }
+rstest = "0.23.0"
+assert_float_eq = "1.1.4"
+criterion = "0.5.1"
+
+[build-dependencies]
+rinja = "0.3.5"
+
+[[bench]]
+name = "wmm"
+harness = false
