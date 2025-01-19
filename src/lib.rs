@@ -1,5 +1,5 @@
 #![no_std]
-#![allow(unused)]
+#![warn(missing_docs)]
 //! This crate is a Rust implementation of the NOAA [World Magnetic Model](https://www.ncei.noaa.gov/products/world-magnetic-model),
 //! a mathematical model of the magnetic field produced by the Earth's core and its variation over time.
 //!
@@ -10,10 +10,10 @@
 //! # Usage
 //! ```rust
 //! # use core::error::Error;
-//! # use time::Date;
-//! # use uom::si::f32::{Angle, Length};
-//! # use uom::si::angle::degree;
-//! # use uom::si::length::meter;
+//! # use world_magnetic_model::time::Date;
+//! # use world_magnetic_model::uom::si::f32::{Angle, Length};
+//! # use world_magnetic_model::uom::si::angle::degree;
+//! # use world_magnetic_model::uom::si::length::meter;
 //! # use world_magnetic_model::GeomagneticField;
 //! # fn main() -> Result<(), Box<dyn Error>> {
 //! let geomagnetic_field = GeomagneticField::new(
@@ -65,37 +65,41 @@
 //! Licensed under either of [Apache License, Version 2.0](https://github.com/budzejko/world_magnetic_model/blob/main/LICENSE-APACHE)
 //! or [MIT license](https://github.com/budzejko/world_magnetic_model/blob/main/LICENSE-MIT) at your option.
 
-use libm::{asinf, atan2f, cos, cosf, sinf, sqrt, sqrtf, tan};
-use time::Date;
-use uom::num_traits::float::FloatCore;
-use uom::si::angle::{degree, radian};
-use uom::si::f32::{Angle, Length, MagneticFluxDensity};
-use uom::si::length::{kilometer, meter};
-use uom::si::magnetic_flux_density::nanotesla;
+pub use error::Error;
+pub use time;
+pub use uom;
 
 mod error;
 mod math;
 mod wmm;
 mod wmm_models;
 
-pub use error::Error;
-use error::Error::*;
-use math::*;
-use wmm_models::*;
+use libm::{asinf, atan2f, cos, cosf, sinf, sqrt, sqrtf, tan};
+use time::Date;
+#[allow(unused)]
+use uom::num_traits::float::FloatCore;
+use uom::si::angle::{degree, radian};
+use uom::si::f32::{Angle, Length, MagneticFluxDensity};
+use uom::si::length::{kilometer, meter};
+use uom::si::magnetic_flux_density::nanotesla;
+
+use error::Error::{HeightOutsideOfValidityRange, InvalidLatitude, InvalidLongitude};
+use math::{index, schmidt_semi_normalised_associated_legendre};
+use wmm_models::WmmErrorModel;
 
 /// Represents the geomagnetic field at given point and date.
 ///
 /// # Examples
 /// ```rust
 /// # use core::error::Error;
-/// # use time::Date;
-/// # use uom::si::f32::{Angle, Length, MagneticFluxDensity};
-/// # use uom::si::angle::{degree, radian};
-/// # use uom::si::length::foot;
-/// # use uom::si::magnetic_flux_density::{nanotesla, gauss};
+/// # use world_magnetic_model::time::Date;
+/// # use world_magnetic_model::uom::si::f32::{Angle, Length, MagneticFluxDensity};
+/// # use world_magnetic_model::uom::si::angle::{degree, radian};
+/// # use world_magnetic_model::uom::si::length::foot;
+/// # use world_magnetic_model::uom::si::magnetic_flux_density::{nanotesla, gauss};
 /// # use world_magnetic_model::GeomagneticField;
 /// # use world_magnetic_model::WarningZone::CautionZone;
-/// # use uom::fmt::DisplayStyle::{Abbreviation, Description};
+/// # use world_magnetic_model::uom::fmt::DisplayStyle::{Abbreviation, Description};
 /// # fn main() -> Result<(), Box<dyn Error>> {
 /// // various units can be used on input
 /// let geomagnetic_field = GeomagneticField::new(
@@ -507,15 +511,14 @@ fn date_to_year_decimal(date: Date) -> f32 {
 mod tests {
     extern crate std;
     use super::*;
-    use assert_float_eq::{assert_float_absolute_eq, assert_float_relative_eq};
     use rstest::rstest;
     use time::Month::*;
-    use uom::si::angle::degree;
 
     #[rstest]
     #[case("ncei.noaa.gov/WMM2020_TestValues.txt")]
     #[case("ncei.noaa.gov/WMM2025_TestValues.txt")]
     fn wmm_tests(#[case] test_file: &str) {
+        use assert_float_eq::{assert_float_absolute_eq, assert_float_relative_eq};
         use std::fs::File;
         use std::io::{BufRead, BufReader};
         use std::path::Path;
@@ -869,15 +872,17 @@ mod tests {
     }
 
     #[rstest]
-    #[case(1918, time::Month::January, 1)]
-    #[case(2019, time::Month::December, 31)]
-    #[case(2030, time::Month::January, 1)]
-    #[case(2229, time::Month::December, 31)]
+    #[case(1918, January, 1)]
+    #[case(2019, December, 31)]
+    #[case(2030, January, 1)]
+    #[case(2229, December, 31)]
     fn test_date_outside_validity_range(
         #[case] year: i32,
         #[case] month: time::Month,
         #[case] day: u8,
     ) {
+        use error::Error::DateOutsideOfValidityRange;
+
         let result = GeomagneticField::new(
             Length::new::<kilometer>(0.0),
             Angle::new::<degree>(0.0),
@@ -888,10 +893,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case(2020, time::Month::January, 1)]
-    #[case(2024, time::Month::December, 31)]
-    #[case(2025, time::Month::January, 1)]
-    #[case(2029, time::Month::December, 31)]
+    #[case(2020, January, 1)]
+    #[case(2024, December, 31)]
+    #[case(2025, January, 1)]
+    #[case(2029, December, 31)]
     fn test_date_validity_range(#[case] year: i32, #[case] month: time::Month, #[case] day: u8) {
         let result = GeomagneticField::new(
             Length::new::<kilometer>(0.0),

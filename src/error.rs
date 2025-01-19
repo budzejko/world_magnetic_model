@@ -11,7 +11,9 @@ pub enum Error {
     /// Error due to the height above WGS 84 ellipsoid argument outside of model validity range.
     #[error("height above WGS 84 ellipsoid outside of model validity range ({min_height_km}km to {max_height_km}km)")]
     HeightOutsideOfValidityRange {
+        /// Minimum height of validity range in kilometres above WGS 84 ellipsoid.
         min_height_km: f32,
+        /// Maximum height of validity range in kilometres above WGS 84 ellipsoid.
         max_height_km: f32,
     },
 
