@@ -27,7 +27,7 @@ fn legendre_function(t: f32, n: usize, m: usize) -> f32 {
         let den = factorial(k) * factorial(n - k) * factorial(n - m - 2 * k);
         p += (num / den) as f32;
     }
-    p * 2.0.powi(-(n as i32)) * powf((1.0 - t.powi(2)), (m as f32 / 2.0))
+    p * 2.0.powi(-(n as i32)) * powf(1.0 - t.powi(2), m as f32 / 2.0)
 }
 
 /// Calculates the Schmidt semi-normalised associated Legendre functions
@@ -54,7 +54,7 @@ pub(crate) fn schmidt_semi_normalised_associated_legendre(mu: f32) -> [f32; 104]
     psn
 }
 
-// Calculates index in flat array based on n and m matrix indices.
+/// Calculates index in flat array based on n and m matrix indices.
 pub(crate) fn index(n: usize, m: usize) -> usize {
     debug_assert!(n >= 1);
     debug_assert!(n <= 13);
@@ -66,7 +66,22 @@ pub(crate) fn index(n: usize, m: usize) -> usize {
 mod tests {
     use super::*;
     use rstest::rstest;
-    use time::Month::*;
+
+    #[rstest]
+    #[case(0, 1.0)]
+    #[case(1, 1.0)]
+    #[case(2, 2.0)]
+    #[case(3, 6.0)]
+    #[case(4, 24.0)]
+    #[case(5, 120.0)]
+    #[case(6, 720.0)]
+    #[case(7, 5040.0)]
+    #[case(8, 40320.0)]
+    #[case(9, 362880.0)]
+    #[case(10, 3628800.0)]
+    fn test_factorial(#[case] n: usize, #[case] result: f64) {
+        assert_eq!(factorial(n), result);
+    }
 
     #[rstest]
     #[case(1, 0, 0)]

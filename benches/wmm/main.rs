@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use time::Date;
-use uom::si::{
+use world_magnetic_model::time::Date;
+use world_magnetic_model::uom::si::{
     angle::degree,
     f32::{Angle, Length},
     length::foot,
