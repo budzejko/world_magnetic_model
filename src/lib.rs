@@ -1,11 +1,12 @@
 #![no_std]
 #![warn(missing_docs)]
-//! This crate is a Rust implementation of the NOAA [World Magnetic Model](https://www.ncei.noaa.gov/products/world-magnetic-model),
-//! a mathematical model of the magnetic field produced by the Earth's core and its variation over time.
+//! This crate is a Rust implementation of the NOAA [World Magnetic Model (WMM)](https://www.ncei.noaa.gov/products/world-magnetic-model),
+//! a mathematical representation of the Earth's core magnetic field and its temporal variations.
 //!
-//! Crate interface is using Units of measurement [uom](https://docs.rs/uom/latest/uom/) crate for physical quantities
-//! representation. WMM coeficient files are converted to code constants to avoid file reading in runtime. Implemented models:
-//! WMM2020 and WMM2025.
+//! The crate's interface utilizes the [uom (Units of Measurement) crate](https://docs.rs/uom/latest/uom/) to represent physical quantities
+//! accurately. WMM coefficient files are converted into code constants to eliminate the need for file reading at runtime.
+//! This crate is compatible with no_std environments, meaning it does not depend on the Rust standard library and can be used in embedded,
+//! bare-metal, or other restricted contexts by relying on the core crate instead. The implemented models include WMM2020 and WMM2025.
 //!
 //! # Usage
 //! ```rust
@@ -17,19 +18,19 @@
 //! # use world_magnetic_model::GeomagneticField;
 //! # fn main() -> Result<(), Box<dyn Error>> {
 //! let geomagnetic_field = GeomagneticField::new(
-//!     Length::new::<meter>(100.0), // height
-//!     Angle::new::<degree>(54.20), // lat
-//!     Angle::new::<degree>(18.67), // lon
-//!     Date::from_ordinal_date(2023, 15)? // date
+//!     Length::new::<meter>(100.0), // Height above the WGS 84 ellipsoid
+//!     Angle::new::<degree>(37.03), // WGS 84 latitude (negative values for the Southern Hemisphere)
+//!     Angle::new::<degree>(-7.91), // WGS 84 longitude (negative values for the Western Hemisphere)
+//!     Date::from_ordinal_date(2029, 15)? // Date (15th day of 2029)
 //! )?;
 //!
 //! assert_eq!(
 //!     geomagnetic_field.declination().get::<degree>(),
-//!     6.439543
+//!     -0.17367662
 //! );
 //! assert_eq!(
 //!     geomagnetic_field.declination_uncertainty().get::<degree>(),
-//!     0.41047537
+//!     0.32549456
 //! );
 //! #     Ok(())
 //! # }
@@ -87,6 +88,9 @@ use error::Error::{HeightOutsideOfValidityRange, InvalidLatitude, InvalidLongitu
 use math::{index, schmidt_semi_normalised_associated_legendre};
 use wmm_models::WmmErrorModel;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /// Represents the geomagnetic field at given point and date.
 ///
 /// # Examples
@@ -103,28 +107,28 @@ use wmm_models::WmmErrorModel;
 /// # fn main() -> Result<(), Box<dyn Error>> {
 /// // various units can be used on input
 /// let geomagnetic_field = GeomagneticField::new(
-///     Length::new::<foot>(3000.0), // height
-///     Angle::new::<degree>(80.0), // lat
-///     Angle::new::<radian>(2.36), // lon
-///     Date::from_ordinal_date(2023, 15)? // date
+///     Length::new::<foot>(3000.0), // Height above the WGS 84 ellipsoid
+///     Angle::new::<degree>(80.0), // WGS 84 latitude (negative values for the Southern Hemisphere)
+///     Angle::new::<radian>(2.36), // WGS 84 longitude (negative values for the Western Hemisphere)
+///     Date::from_ordinal_date(2029, 15)? // Date (15th day of 2029)
 /// )?;
 ///
 /// // declination results can be interpreted as degrees or radians
 /// assert_eq!(
 ///     geomagnetic_field.declination().get::<degree>(),
-///     -19.997639
+///     -26.410055
 /// );
 /// assert_eq!(
 ///     geomagnetic_field.declination().get::<radian>(),
-///     -0.34902462
+///     -0.46094242
 /// );
 /// assert_eq!(
 ///     geomagnetic_field.declination_uncertainty().get::<degree>(),
-///     2.088066
+///     2.071053
 /// );
 /// assert_eq!(
 ///     geomagnetic_field.declination_uncertainty().get::<radian>(),
-///     0.03644363
+///     0.036146693
 /// );
 ///
 /// // warning conditions can be checked e.g. for user interface warning
@@ -136,21 +140,21 @@ use wmm_models::WmmErrorModel;
 /// // magnetic flux density results can be interpreted as nT or gauss
 /// assert_eq!(
 ///     geomagnetic_field.f().get::<nanotesla>(),
-///     58768.96
+///     59020.676
 /// );
 /// assert_eq!(
 ///     geomagnetic_field.f().get::<gauss>(),
-///     0.58768964
+///     0.59020674
 /// );
 ///
 /// // results can be formatted with unit abbreviation or full description
 /// assert_eq!(
 ///     format!("{:.2}", geomagnetic_field.f().into_format_args(nanotesla, Abbreviation)),
-///     "58768.96 nT"
+///     "59020.68 nT"
 /// );
 /// assert_eq!(
 ///     format!("{:.2}", geomagnetic_field.f().into_format_args(nanotesla, Description)),
-///     "58768.96 nanoteslas"
+///     "59020.68 nanoteslas"
 /// );
 /// #     Ok(())
 /// # }
@@ -203,10 +207,10 @@ impl GeomagneticField {
     ///
     /// # Arguments
     ///
-    /// * `height` - the height above World Geodetic System 1984 (WGS 84) ellipsoid (from -1km to +850km).
-    /// * `latitude` - the WGS 84 latitude.
-    /// * `longitude` - the WGS 84 longitude.
-    /// * `date` - the date for the WMM model evaluation.
+    /// * `height` - Height above World Geodetic System 1984 (WGS 84) ellipsoid (from -1km to +850km).
+    /// * `latitude` - WGS 84 latitude (negative values for the Southern Hemisphere).
+    /// * `longitude` - WGS 84 longitude (negative values for the Western Hemisphere).
+    /// * `date` - Date for the WMM model evaluation.
     ///
     /// # Errors
     /// When [GeomagneticField] cannot be calculated for given argumants, [error::Error] is returned.
@@ -508,6 +512,7 @@ fn date_to_year_decimal(date: Date) -> f32 {
 }
 
 #[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 mod tests {
     extern crate std;
     use super::*;
@@ -814,7 +819,7 @@ mod tests {
             Angle::new::<degree>(0.0),
             Date::from_ordinal_date(2023, 15).unwrap(),
         );
-        assert_eq!(result.is_err_and(|e| e == InvalidLatitude), true);
+        assert!(result.is_err_and(|e| e == InvalidLatitude));
     }
 
     #[rstest]
@@ -831,7 +836,7 @@ mod tests {
             Angle::new::<degree>(longitude),
             Date::from_ordinal_date(2023, 15).unwrap(),
         );
-        assert_eq!(result.is_err_and(|e| e == InvalidLongitude), true);
+        assert!(result.is_err_and(|e| e == InvalidLongitude));
     }
 
     #[rstest]
@@ -848,14 +853,11 @@ mod tests {
             Angle::new::<degree>(0.0),
             Date::from_ordinal_date(2023, 15).unwrap(),
         );
-        assert_eq!(
-            result.is_err_and(|e| e
-                == HeightOutsideOfValidityRange {
-                    min_height_km: -1.0,
-                    max_height_km: 850.0
-                }),
-            true
-        );
+        assert!(result.is_err_and(|e| e
+            == HeightOutsideOfValidityRange {
+                min_height_km: -1.0,
+                max_height_km: 850.0
+            }));
     }
 
     #[rstest]
@@ -889,7 +891,7 @@ mod tests {
             Angle::new::<degree>(0.0),
             Date::from_calendar_date(year, month, day).unwrap(),
         );
-        assert_eq!(result.is_err_and(|e| e == DateOutsideOfValidityRange), true);
+        assert!(result.is_err_and(|e| e == DateOutsideOfValidityRange));
     }
 
     #[rstest]
@@ -916,12 +918,12 @@ mod tests {
 
     #[rstest]
     #[case(2020, July, 2, 2020.5)]
-    #[case(2021, July, 3, 2021.5013698630137)]
+    #[case(2021, July, 3, 2021.5013)]
     #[case(2023, January, 1, 2023.0)]
-    #[case(2023, January, 2, 2023.0027397260274)]
-    #[case(2024, January, 2, 2024.0027322404371)]
-    #[case(2024, December, 12, 2024.9453551912568)]
-    #[case(2024, December, 31, 2024.9972677595629)]
+    #[case(2023, January, 2, 2023.0027)]
+    #[case(2024, January, 2, 2024.0027)]
+    #[case(2024, December, 12, 2024.9453)]
+    #[case(2024, December, 31, 2024.9973)]
     #[case(2025, January, 1, 2025.0)]
     fn test_year_decimal_conversions(
         #[case] year_int: i32,

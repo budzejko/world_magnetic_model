@@ -1,30 +1,30 @@
 [package]
 name = "world_magnetic_model"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Rust implementation of the NOAA World Magnetic Model."
+description = "Rust implementation of the NOAA World Magnetic Model (WMM)."
 repository = "https://github.com/budzejko/world_magnetic_model"
-keywords = ["geomagnetic", "wmm", "declination"]
+keywords = ["geomagnetic", "magnetic", "wmm", "declination", "no_std"]
 categories = ["science::geo", "aerospace", "embedded", "no-std"]
 documentation = "https://docs.rs/world_magnetic_model/latest/"
 exclude = [".git*", "benches/", "build.rs", "ncei.noaa.gov/", "templates/"]
 
 [dependencies]
-uom = {version="0.36.0", default-features = false, features = ["si", "f32"] }
-time = {version="0.3.37", default-features = false}
-thiserror = {version="2.0.11", default-features = false}
-serde = { version = "1.0.217", optional = true, features = ["derive"] }
-libm = "0.2.11"
+uom = {version="0.37.0", default-features = false, features = ["si", "f32"] }
+time = {version="0.3.41", default-features = false}
+thiserror = {version="2.0.12", default-features = false}
+serde = { version = "1.0.219", optional = true, features = ["derive"] }
+libm = "0.2.14"
 
 [dev-dependencies]
-time = {version="0.3.37", default-features = false, features = ["local-offset", "parsing"] }
-rstest = "0.24.0"
+time = {version="0.3.41", default-features = false, features = ["local-offset", "parsing"] }
+rstest = "0.25.0"
 assert_float_eq = "1.1.4"
-criterion = "0.5.1"
+criterion = "0.6.0"
 
 [build-dependencies]
-rinja = "0.3.5"
+askama = "0.14.0"
 
 [[bench]]
 name = "wmm"

@@ -1,4 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
 use world_magnetic_model::time::Date;
 use world_magnetic_model::uom::si::{
     angle::degree,
