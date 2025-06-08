@@ -4,6 +4,7 @@ RUST_BACKTRACE = "1"
 [tools]
 rust = { version = "latest", targets = "thumbv6m-none-eabi,x86_64-unknown-linux-gnu" }
 "cargo:cargo-audit" = "latest"
+"cargo:cargo-readme" = "latest"
 "cargo:cargo-tarpaulin" = "latest"
 "cargo:cargo-test-all-features" = "latest"
 
@@ -70,7 +71,7 @@ run = "cargo clippy --all-targets --all-features --target-dir target/_lint -- -D
 
 [tasks.publish]
 description = "Perform a dry-run publish to crates.io"
-depends = "build_gen_wmm"
+depends = ["build_gen_wmm", "readme"]
 run = "cargo publish --dry-run"
 
 [tasks.quality]
@@ -90,6 +91,10 @@ depends = [
   "test",
   "test_all_features",
 ]
+
+[tasks.readme]
+description = "Re-generate README.md file"
+run = "cargo readme > README.md"
 
 [tasks.release]
 description = "Build the release version"

@@ -1,28 +1,29 @@
 # world_magnetic_model
 
-This crate is a Rust implementation of the NOAA [World Magnetic Model](https://www.ncei.noaa.gov/products/world-magnetic-model),
-a mathematical model of the magnetic field produced by the Earth's core and its variation over time.
+This crate is a Rust implementation of the NOAA [World Magnetic Model (WMM)](https://www.ncei.noaa.gov/products/world-magnetic-model),
+a mathematical representation of the Earth's core magnetic field and its temporal variations.
 
-Crate interface is using Units of measurement [uom](https://docs.rs/uom/latest/uom/) crate for physical quantities
-representation. WMM coeficient files are converted to code constants to avoid file reading in runtime. Implemented models:
-WMM2020 and WMM2025.
+The crate's interface utilizes the [uom (Units of Measurement) crate](https://docs.rs/uom/latest/uom/) to represent physical quantities
+accurately. WMM coefficient files are converted into code constants to eliminate the need for file reading at runtime.
+This crate is compatible with no_std environments, meaning it does not depend on the Rust standard library and can be used in embedded,
+bare-metal, or other restricted contexts by relying on the core crate instead. The implemented models include WMM2020 and WMM2025.
 
 ## Usage
 ```rust
 let geomagnetic_field = GeomagneticField::new(
-    Length::new::<meter>(100.0), // height
-    Angle::new::<degree>(54.20), // lat
-    Angle::new::<degree>(18.67), // lon
-    Date::from_ordinal_date(2023, 15)? // date
+    Length::new::<meter>(100.0), // Height above the WGS 84 ellipsoid
+    Angle::new::<degree>(37.03), // WGS 84 latitude (negative values for the Southern Hemisphere)
+    Angle::new::<degree>(-7.91), // WGS 84 longitude (negative values for the Western Hemisphere)
+    Date::from_ordinal_date(2029, 15)? // Date (15th day of 2029)
 )?;
 
 assert_eq!(
     geomagnetic_field.declination().get::<degree>(),
-    6.439543
+    -0.17367662
 );
 assert_eq!(
     geomagnetic_field.declination_uncertainty().get::<degree>(),
-    0.41047537
+    0.32549456
 );
 ```
 
