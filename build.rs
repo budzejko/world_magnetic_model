@@ -1,4 +1,4 @@
-use rinja::Template;
+use askama::Template;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::Path;

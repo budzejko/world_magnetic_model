@@ -1,6 +1,9 @@
 use crate::wmm::WMM_MODELS;
 use time::Date;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 const NUMBER_OF_MODELS: usize = 2;
 const WMM_VALIDITY_RANGE_IN_YEARS: i32 = 5;
 
@@ -14,6 +17,7 @@ pub(crate) struct WmmModel {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub(crate) struct WmmErrorModel {
     pub(crate) model_version: i32,
     pub(crate) declination_constant_error_factor: f32,

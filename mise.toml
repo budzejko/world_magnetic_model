@@ -1,0 +1,108 @@
+[env]
+RUST_BACKTRACE = "1"
+
+[tools]
+rust = { version = "latest", targets = "thumbv6m-none-eabi,x86_64-unknown-linux-gnu" }
+"cargo:cargo-audit" = "latest"
+"cargo:cargo-tarpaulin" = "latest"
+"cargo:cargo-test-all-features" = "latest"
+
+[tasks.audit]
+description = "Audit dependencies for security vulnerabilities"
+run = "cargo audit"
+
+[tasks.bench]
+description = "Run benchmarks"
+run = "cargo bench --target-dir target/_bench"
+
+[tasks.build]
+description = "Build the Rust library"
+run = "cargo build --target-dir target/_build"
+
+[tasks.build_arm]
+description = "Build the Rust library"
+run = "cargo build  --target thumbv6m-none-eabi --target-dir target/_build_arm"
+
+[tasks.build_gen_wmm]
+description = "Regenerate WMM constants from COF files and build the Rust library"
+env = { GEN_WMM_SRC = "YES" }
+run = "cargo build --target-dir target/_build"
+
+[tasks.check]
+description = "Check code for errors without building"
+run = "cargo check --target-dir target/_check"
+
+[tasks.clean]
+description = "Remove build artifacts"
+run = "cargo clean"
+
+[tasks.cov]
+description = "Analyze code coverage"
+run = "cargo tarpaulin --all-features --fail-under 98 --out Html --output-dir target/_cov"
+
+[tasks."demo:newtype"]
+description = "Run the 'newtype' demo"
+run = "cargo run --example=demo_newtype --target-dir target/_demo"
+
+[tasks."demo:today"]
+description = "Run the 'today' demo"
+run = "cargo run --example=demo_today --target-dir target/_demo"
+
+[tasks."demo:wmm2020_wmm2025"]
+description = "Run the 'wmm2020_wmm2025' demo"
+run = "cargo run --example=demo_wmm2020_wmm2025 --target-dir target/_demo"
+
+[tasks.demos]
+description = "Run all demos"
+depends = "demo:**"
+
+[tasks.docs]
+description = "Build documentation"
+run = "cargo doc --no-deps --target-dir target/_docs"
+
+[tasks.fmt]
+description = "Check code formatting"
+run = "cargo fmt --all --check --verbose"
+
+[tasks.lint]
+description = "Run Clippy linter"
+run = "cargo clippy --all-targets --all-features --target-dir target/_lint -- -D warnings"
+
+[tasks.publish]
+description = "Perform a dry-run publish to crates.io"
+depends = "build_gen_wmm"
+run = "cargo publish --dry-run"
+
+[tasks.quality]
+description = "Run all quality checks"
+alias = "q"
+depends = [
+  "audit",
+  "build",
+  "build_arm",
+  "check",
+  "cov",
+  "demos",
+  "docs",
+  "fmt",
+  "lint",
+  "release",
+  "test",
+  "test_all_features",
+]
+
+[tasks.release]
+description = "Build the release version"
+run = "cargo build --release --target-dir target/_release"
+
+[tasks.test]
+description = "Run tests"
+run = "cargo test --target-dir target/_test"
+
+[tasks.test_all_features]
+description = "Run tests with all feature flag combinations"
+run = "cargo test-all-features --target-dir target/_test_all_features"
+
+[tasks.update]
+description = "Update dependencies"
+run = "cargo update"
