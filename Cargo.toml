@@ -8,7 +8,7 @@ repository = "https://github.com/budzejko/world_magnetic_model"
 keywords = ["geomagnetic", "magnetic", "wmm", "declination", "no_std"]
 categories = ["science::geo", "aerospace", "embedded", "no-std"]
 documentation = "https://docs.rs/world_magnetic_model/latest/"
-exclude = [".git*", "benches/", "build.rs", "ncei.noaa.gov/", "templates/", "mise.toml", "Cargo.lock"]
+exclude = [".git*", "benches/", "build.rs", "ncei.noaa.gov/", "templates/", "mise.toml"]
 
 [dependencies]
 uom = {version="0.37.0", default-features = false, features = ["si", "f32"] }
