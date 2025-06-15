@@ -5,8 +5,8 @@
 //!
 //! The crate's interface utilizes the [uom (Units of Measurement) crate](https://docs.rs/uom/latest/uom/) to represent physical quantities
 //! accurately. WMM coefficient files are converted into code constants to eliminate the need for file reading at runtime.
-//! This crate is compatible with no_std environments, meaning it does not depend on the Rust standard library and can be used in embedded,
-//! bare-metal, or other restricted contexts by relying on the core crate instead. The implemented models include WMM2020 and WMM2025.
+//! This crate is compatible with `no_std` environments, meaning it does not depend on the Rust standard library and can be used in embedded,
+//! bare-metal, or other restricted contexts by relying on the core crate instead. The implemented models include `WMM2020` and `WMM2025`.
 //!
 //! # Usage
 //! ```rust

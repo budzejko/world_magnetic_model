@@ -1,10 +1,36 @@
 use libm::{powf, sqrtf};
 use uom::num_traits::float::FloatCore;
 
-/// Calculates the factorial of a number.
-fn factorial(n: usize) -> f64 {
-    (1..=n).fold(1.0, |acc, x| acc * x as f64)
-}
+// Precomputed factorials up to 26!
+const FACTORIAL: [f64; 27] = [
+    1.0,
+    1.0,
+    2.0,
+    6.0,
+    24.0,
+    120.0,
+    720.0,
+    5040.0,
+    40320.0,
+    362880.0,
+    3628800.0,
+    39916800.0,
+    479001600.0,
+    6227020800.0,
+    87178291200.0,
+    1307674368000.0,
+    20922789888000.0,
+    355687428096000.0,
+    6402373705728000.0,
+    121645100408832000.0,
+    2432902008176640000.0,
+    51090942171709440000.0,
+    1124000727777607680000.0,
+    25852016738884976640000.0,
+    620448401733239439360000.0,
+    15511210043330985984000000.0,
+    403291461126605635584000000.0,
+];
 
 /// Calculates the Legendre function (polynomial or associated function).
 ///
@@ -19,12 +45,15 @@ fn factorial(n: usize) -> f64 {
 /// # Reference
 /// * Heiskanen and Moritz, 1967 (https://archive.org/details/HeiskanenMoritz1967PhysicalGeodesy/page/n33/mode/2up): equation 1-62
 fn legendre_function(t: f32, n: usize, m: usize) -> f32 {
+    debug_assert!(n >= 1);
+    debug_assert!(n >= m);
+    debug_assert!(n <= 13);
     let mut p = 0.0;
     for k in 0..=((n - m) / 2) {
         let num = (-1.0_f64).powi(k as i32)
-            * factorial(2 * n - 2 * k)
+            * FACTORIAL[2 * n - 2 * k]
             * (t as f64).powi(n as i32 - m as i32 - 2 * k as i32);
-        let den = factorial(k) * factorial(n - k) * factorial(n - m - 2 * k);
+        let den = FACTORIAL[k] * FACTORIAL[n - k] * FACTORIAL[n - m - 2 * k];
         p += (num / den) as f32;
     }
     p * 2.0.powi(-(n as i32)) * powf(1.0 - t.powi(2), m as f32 / 2.0)
@@ -43,12 +72,13 @@ pub(crate) fn schmidt_semi_normalised_associated_legendre(mu: f32) -> [f32; 104]
     for n in 1..=13 {
         for m in 0..=n {
             let ix = index(n, m);
-            if m == 0 {
-                psn[ix] = legendre_function(mu, n, m);
+            let legendre = legendre_function(mu, n, m);
+            psn[ix] = if m == 0 {
+                legendre
             } else {
-                psn[ix] = sqrtf((2.0 * factorial(n - m) / factorial(n + m)) as f32)
-                    * legendre_function(mu, n, m);
-            }
+                let ratio = FACTORIAL[n - m] / FACTORIAL[n + m];
+                sqrtf(2.0 * ratio as f32) * legendre
+            };
         }
     }
     psn
@@ -57,31 +87,15 @@ pub(crate) fn schmidt_semi_normalised_associated_legendre(mu: f32) -> [f32; 104]
 /// Calculates index in flat array based on n and m matrix indices.
 pub(crate) fn index(n: usize, m: usize) -> usize {
     debug_assert!(n >= 1);
+    debug_assert!(n >= m);
     debug_assert!(n <= 13);
-    debug_assert!(m <= n);
-    (1..=n).sum::<usize>() + m - 1
+    n * (n + 1) / 2 + m - 1
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rstest::rstest;
-
-    #[rstest]
-    #[case(0, 1.0)]
-    #[case(1, 1.0)]
-    #[case(2, 2.0)]
-    #[case(3, 6.0)]
-    #[case(4, 24.0)]
-    #[case(5, 120.0)]
-    #[case(6, 720.0)]
-    #[case(7, 5040.0)]
-    #[case(8, 40320.0)]
-    #[case(9, 362880.0)]
-    #[case(10, 3628800.0)]
-    fn test_factorial(#[case] n: usize, #[case] result: f64) {
-        assert_eq!(factorial(n), result);
-    }
 
     #[rstest]
     #[case(1, 0, 0)]
