@@ -1,0 +1,16 @@
+//! WMM Gauss coefficients \(g_n^m\), \(h_n^m\) and secular variation \(\dot g_n^m\), \(\dot h_n^m\).
+use crate::wmm_models::WmmModel;
+
+#[rustfmt::skip]
+pub(crate) const WMM_MODELS: [WmmModel; {{ models.len() }}] = [
+    {%- for model in models %}
+    WmmModel {
+        epoch_year: {{ model.epoch_year }},
+        g: [{{ model.g| join("_f32, ") }}_f32],
+        h: [{{ model.h| join("_f32, ") }}_f32],
+        g_dot: [{{ model.g_dot| join("_f32, ") }}_f32],
+        h_dot: [{{ model.h_dot| join("_f32, ") }}_f32],
+    },
+    {%- endfor %}
+];
+

@@ -1,9 +1,9 @@
+use world_magnetic_model::GeomagneticField;
 use world_magnetic_model::time::OffsetDateTime;
 use world_magnetic_model::uom::fmt::DisplayStyle::Abbreviation;
 use world_magnetic_model::uom::si::angle::degree;
 use world_magnetic_model::uom::si::f32::{Angle, Length};
 use world_magnetic_model::uom::si::length::meter;
-use world_magnetic_model::GeomagneticField;
 
 fn main() {
     let today = OffsetDateTime::now_utc().date();
@@ -14,7 +14,7 @@ fn main() {
         ("Wołosate", 49.066563, 22.68012),
     ];
 
-    println!("{}", today);
+    println!("{today}");
 
     for point in points {
         let geomagnetic_field = GeomagneticField::new(

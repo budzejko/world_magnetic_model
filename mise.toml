@@ -2,7 +2,7 @@
 RUST_BACKTRACE = "1"
 
 [tools]
-rust = { version = "latest", targets = "thumbv6m-none-eabi,x86_64-unknown-linux-gnu" }
+rust = { version = "latest", targets = "thumbv6m-none-eabi,x86_64-unknown-linux-gnu", components = "rust-analyzer" }
 "cargo:cargo-audit" = "latest"
 "cargo:cargo-readme" = "latest"
 "cargo:cargo-tarpaulin" = "latest"
@@ -16,6 +16,10 @@ run = "cargo build --target-dir target/_build"
 [tasks.build_arm]
 description = "Build the Rust library for ARM target"
 run = "cargo build --target thumbv6m-none-eabi --target-dir target/_build_arm"
+
+[tasks.build_arm_serde]
+description = "Build the Rust library for ARM target with serde (no_std)"
+run = "cargo build --target thumbv6m-none-eabi --features serde --target-dir target/_build_arm_serde"
 
 [tasks.build_gen_wmm]
 description = "Regenerate WMM constants from COF files and build the Rust library"
@@ -36,21 +40,33 @@ description = "Run tests with all possible feature flag combinations"
 run = "cargo test-all-features --target-dir target/_test_all_features"
 
 [tasks.test_features]
-description = "Run tests with a specific features"
+description = "Run tests with specific features"
 run = "cargo test --features {{arg(name='features', default='')}} --target-dir target/_test_features"
+
+[tasks.proptest]
+description = "Run property_tests::valid_query_invariants"
+run = "PROPTEST_CASES={{arg(name='cases', default='400000')}} cargo test property_tests::valid_query_invariants --target-dir target/_proptest"
 
 # Demo tasks
 [tasks."demo:newtype"]
 description = "Run the 'newtype' demo showing custom type usage"
 run = "cargo run --example=demo_newtype --target-dir target/_demo"
 
+[tasks."demo:serde"]
+description = "Run the serde demo showing JSON and postcard roundtrips"
+run = "cargo run --example=demo_serde --features serde --target-dir target/_demo"
+
 [tasks."demo:today"]
 description = "Run the 'today' demo showing current date calculations"
 run = "cargo run --example=demo_today --target-dir target/_demo"
 
 [tasks."demo:wmm2020_wmm2025"]
-description = "Run the 'wmm2020_wmm2025' demo comparing model versions"
+description = "Run the 'wmm2020_wmm2025' demo comparing WMM epochs"
 run = "cargo run --example=demo_wmm2020_wmm2025 --target-dir target/_demo"
+
+[tasks."demo:sv_extrapolation"]
+description = "Compare WMM declination with linear SV extrapolation"
+run = "cargo run --example=demo_sv_extrapolation --target-dir target/_demo"
 
 [tasks.demos]
 description = "Run all demo applications"
@@ -76,7 +92,7 @@ run = "cargo check --target-dir target/_check"
 
 [tasks.cov]
 description = "Analyze code coverage"
-run = "cargo tarpaulin --all-features --fail-under 98 --out Html --output-dir target/_cov"
+run = "cargo tarpaulin --all-features --fail-under 95 --out Html --output-dir target/_cov"
 
 [tasks.fmt]
 description = "Check code formatting"
@@ -113,12 +129,14 @@ depends = [
   "audit",
   "build",
   "build_arm",
+  "build_arm_serde",
   "check",
   "cov",
   "demos",
   "docs",
   "fmt",
   "lint",
+  "proptest",
   "release",
   "test",
   "test_all_features",

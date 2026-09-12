@@ -1,30 +1,44 @@
 [package]
 name = "world_magnetic_model"
-version = "0.4.0"
-edition = "2021"
+version = "1.2025.0"
+edition = "2024"
+rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 description = "Rust implementation of the NOAA World Magnetic Model (WMM)."
 repository = "https://github.com/budzejko/world_magnetic_model"
-keywords = ["geomagnetic", "magnetic", "wmm", "declination", "no_std"]
-categories = ["science::geo", "aerospace", "embedded", "no-std"]
+keywords = ["wmm", "geomagnetic", "declination", "navigation", "geodetic"]
+categories = ["science::geo", "science::robotics", "aerospace", "embedded", "no-std"]
 documentation = "https://docs.rs/world_magnetic_model/latest/"
-exclude = [".git*", "benches/", "build.rs", "ncei.noaa.gov/", "templates/", "mise.toml"]
+exclude = [".git*", "benches/", "build.rs", "ncei.noaa.gov/", "templates/", "mise.toml", "CHANGELOG.md"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints.rust]
+unsafe_code = "forbid"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(has_ncei_test_file, values(any()))'] }
+
+[features]
+serde = ["dep:serde"]
 
 [dependencies]
-uom = {version="0.37.0", default-features = false, features = ["si", "f32"] }
-time = {version="0.3.41", default-features = false}
-thiserror = {version="2.0.12", default-features = false}
-serde = { version = "1.0.219", optional = true, features = ["derive"] }
-libm = "0.2.14"
+uom = {version="0.38.0", default-features = false, features = ["si", "f32"] }
+time = {version="0.3.55", default-features = false}
+thiserror = {version="2.0.20", default-features = false}
+serde = { version = "1.0.229", optional = true, default-features = false, features = ["derive"] }
+libm = "0.2.16"
 
 [dev-dependencies]
-time = {version="0.3.41", default-features = false, features = ["local-offset", "parsing"] }
-rstest = "0.25.0"
-assert_float_eq = "1.1.4"
-criterion = "0.6.0"
+time = {version="0.3.55", default-features = false, features = ["local-offset", "parsing"] }
+rstest = "0.27.0"
+proptest = "1.11.0"
+assert_float_eq = "1.2.0"
+criterion = "0.8.2"
+serde_json = "1.0.145"
+postcard = { version = "1.1.3", default-features = false }
 
 [build-dependencies]
-askama = "0.14.0"
+askama = "0.16.1"
 
 [[bench]]
 name = "wmm"
@@ -39,5 +53,14 @@ name = "demo_wmm2020_wmm2025"
 path = "examples/demo_wmm2020_wmm2025.rs"
 
 [[example]]
+name = "demo_sv_extrapolation"
+path = "examples/demo_sv_extrapolation.rs"
+
+[[example]]
 name = "demo_newtype"
 path = "examples/demo_newtype.rs"
+
+[[example]]
+name = "demo_serde"
+path = "examples/demo_serde.rs"
+required-features = ["serde"]
