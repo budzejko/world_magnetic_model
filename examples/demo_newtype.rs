@@ -1,10 +1,10 @@
 mod wmm {
-    use world_magnetic_model::time::format_description::well_known::Iso8601;
+    use world_magnetic_model::GeomagneticField;
     use world_magnetic_model::time::Date;
+    use world_magnetic_model::time::format_description::well_known::Iso8601;
     use world_magnetic_model::uom::si::angle::{degree, mil};
     use world_magnetic_model::uom::si::f32::{Angle, Length};
     use world_magnetic_model::uom::si::length::meter;
-    use world_magnetic_model::GeomagneticField;
 
     pub struct Wmm(GeomagneticField);
 
@@ -40,7 +40,7 @@ fn main() {
         ("Wołosate", 49.066563, 22.68012),
     ];
 
-    println!("{}", date);
+    println!("{date}");
 
     for point in points {
         let geomagnetic_field = wmm::Wmm::new(100.0, point.1, point.2, date);

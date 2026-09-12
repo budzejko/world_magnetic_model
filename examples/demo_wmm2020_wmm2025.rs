@@ -1,9 +1,9 @@
+use world_magnetic_model::GeomagneticField;
 use world_magnetic_model::time::{Date, Month};
 use world_magnetic_model::uom::fmt::DisplayStyle::Abbreviation;
 use world_magnetic_model::uom::si::angle::degree;
 use world_magnetic_model::uom::si::f32::{Angle, Length};
 use world_magnetic_model::uom::si::length::meter;
-use world_magnetic_model::GeomagneticField;
 
 fn main() {
     let points = [

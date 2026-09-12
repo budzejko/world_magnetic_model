@@ -1,4 +1,5 @@
 #![no_std]
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 //! This crate is a Rust implementation of the NOAA [World Magnetic Model (WMM)](https://www.ncei.noaa.gov/products/world-magnetic-model),
 //! a mathematical representation of the Earth's core magnetic field and its temporal variations.
@@ -6,9 +7,26 @@
 //! The crate's interface utilizes the [uom (Units of Measurement) crate](https://docs.rs/uom/latest/uom/) to represent physical quantities
 //! accurately. WMM coefficient files are converted into code constants to eliminate the need for file reading at runtime.
 //! This crate is compatible with `no_std` environments, meaning it does not depend on the Rust standard library and can be used in embedded,
-//! bare-metal, or other restricted contexts by relying on the core crate instead. The implemented models include `WMM2020` and `WMM2025`.
+//! bare-metal, or other restricted contexts by relying on the core crate instead.
+//!
+//! # Bundled models
+//!
+//! Each release ships two consecutive WMM coefficient sets (currently 2020 and 2025),
+//! selected automatically from the evaluation date. A successor model is published while
+//! the current epoch is still in force. Keeping both the outgoing and incoming sets in
+//! the crate lets embedded firmware reserve a constant footprint for coefficients: an
+//! update that replaces the older epoch with the newly published one does not grow the
+//! image, and devices already carry the next model when the epoch boundary arrives.
+//!
+//! Crate versions follow `api.epoch.patch`, where `epoch` is the year of the newest
+//! bundled WMM model.
 //!
 //! # Usage
+//!
+//! Results are shown as \(D \pm \sigma_D\) (1σ). Field accuracy is the
+//! [WMM error model](https://www.ncei.noaa.gov/products/world-magnetic-model/accuracy-limitations-error-model),
+//! not the `f32` precision.
+//!
 //! ```rust
 //! # use core::error::Error;
 //! # use world_magnetic_model::time::Date;
@@ -24,15 +42,49 @@
 //!     Date::from_ordinal_date(2029, 15)? // Date (15th day of 2029)
 //! )?;
 //!
-//! assert_eq!(
-//!     geomagnetic_field.declination().get::<degree>(),
-//!     -0.17367662
-//! );
-//! assert_eq!(
-//!     geomagnetic_field.declination_uncertainty().get::<degree>(),
-//!     0.32549456
-//! );
+//! let d = geomagnetic_field.declination().get::<degree>();
+//! let sigma = geomagnetic_field.declination_uncertainty().get::<degree>();
+//!
+//! assert_eq!(format!("{d:.2} ± {sigma:.2}°"), "-0.17 ± 0.33°");
 //! #     Ok(())
+//! # }
+//! ```
+//!
+//! # Cargo features
+//!
+//! Enable **`serde`** for `Serialize`/`Deserialize` on [`GeomagneticField`] and
+//! [`WarningZone`]. `GeomagneticField` encodes the constructor query plus public
+//! results (declination, intensity, warning, …). Deserialization uses the
+//! inputs only and recomputes through [`GeomagneticField::new`]. Enabling
+//! `serde` does not pull in `std`. Encode with any serde codec, for example
+//! `serde_json` or `postcard`.
+//!
+//! ```
+//! # #[cfg(not(feature = "serde"))]
+//! # fn main() {}
+//! # #[cfg(feature = "serde")]
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! # use world_magnetic_model::time::Date;
+//! # use world_magnetic_model::uom::si::f32::{Angle, Length};
+//! # use world_magnetic_model::uom::si::angle::degree;
+//! # use world_magnetic_model::uom::si::length::meter;
+//! # use world_magnetic_model::GeomagneticField;
+//! # let geomagnetic_field = GeomagneticField::new(
+//! #     Length::new::<meter>(100.0),
+//! #     Angle::new::<degree>(37.03),
+//! #     Angle::new::<degree>(-7.91),
+//! #     Date::from_ordinal_date(2029, 15)?,
+//! # )?;
+//! let json = serde_json::to_string(&geomagnetic_field)?;
+//! let from_json: GeomagneticField = serde_json::from_str(&json)?;
+//!
+//! let mut buf = [0u8; 256];
+//! let bytes = postcard::to_slice(&geomagnetic_field, &mut buf)?;
+//! let from_postcard: GeomagneticField = postcard::from_bytes(bytes)?;
+//!
+//! assert_eq!(geomagnetic_field.declination(), from_json.declination());
+//! assert_eq!(geomagnetic_field.declination(), from_postcard.declination());
+//! # Ok(())
 //! # }
 //! ```
 //!
@@ -60,7 +112,7 @@
 //! The WMM model and associated data files are produced by the U.S. Government and are not subject to copyright.
 //!
 //! # Credit
-//! This work was inspired from [geomag-wmm](https://git.hostux.fr/ConstellationVFR/geomag-wmm).
+//! This work was inspired by [geomag-wmm](https://crates.io/crates/geomag-wmm/0.1.0).
 //!
 //! # License
 //! Licensed under either of [Apache License, Version 2.0](https://github.com/budzejko/world_magnetic_model/blob/main/LICENSE-APACHE)
@@ -71,12 +123,15 @@ pub use time;
 pub use uom;
 
 mod error;
-mod math;
-mod wmm;
+#[cfg(feature = "serde")]
+mod serde_support;
+mod synthesis;
+mod wmm_data;
 mod wmm_models;
 
-use libm::{asinf, atan2f, cos, cosf, sinf, sqrt, sqrtf, tan};
+use libm::{atan2f, cosf, sinf, sqrtf};
 use time::Date;
+// `f32::powi` in `no_std` comes from this trait; unused when the std test harness is linked.
 #[allow(unused)]
 use uom::num_traits::float::FloatCore;
 use uom::si::angle::{degree, radian};
@@ -85,7 +140,7 @@ use uom::si::length::{kilometer, meter};
 use uom::si::magnetic_flux_density::nanotesla;
 
 use error::Error::{HeightOutsideOfValidityRange, InvalidLatitude, InvalidLongitude};
-use math::{index, schmidt_semi_normalised_associated_legendre};
+use synthesis::{N_COEFF, sin_cos_m_lambda, synthesize_near_pole, synthesize_xyz_prime};
 use wmm_models::WmmErrorModel;
 
 #[cfg(feature = "serde")]
@@ -115,20 +170,20 @@ use serde::{Deserialize, Serialize};
 ///
 /// // declination results can be interpreted as degrees or radians
 /// assert_eq!(
-///     geomagnetic_field.declination().get::<degree>(),
-///     -26.410055
+///     format!("{:.2}", geomagnetic_field.declination().get::<degree>()),
+///     "-26.41"
 /// );
 /// assert_eq!(
-///     geomagnetic_field.declination().get::<radian>(),
-///     -0.46094242
+///     format!("{:.3}", geomagnetic_field.declination().get::<radian>()),
+///     "-0.461"
 /// );
 /// assert_eq!(
-///     geomagnetic_field.declination_uncertainty().get::<degree>(),
-///     2.071053
+///     format!("{:.2}", geomagnetic_field.declination_uncertainty().get::<degree>()),
+///     "2.07"
 /// );
 /// assert_eq!(
-///     geomagnetic_field.declination_uncertainty().get::<radian>(),
-///     0.036146693
+///     format!("{:.3}", geomagnetic_field.declination_uncertainty().get::<radian>()),
+///     "0.036"
 /// );
 ///
 /// // warning conditions can be checked e.g. for user interface warning
@@ -137,70 +192,184 @@ use serde::{Deserialize, Serialize};
 ///     Some(CautionZone)
 /// );
 ///
+/// // grid variation (UPS) is defined at |latitude| ≥ 55°
+/// assert_eq!(
+///     format!(
+///         "{:.2}",
+///         geomagnetic_field.grid_variation().unwrap().get::<degree>()
+///     ),
+///     "-161.63"
+/// );
+///
 /// // magnetic flux density results can be interpreted as nT or gauss
 /// assert_eq!(
-///     geomagnetic_field.f().get::<nanotesla>(),
-///     59020.676
+///     format!("{:.0}", geomagnetic_field.f().get::<nanotesla>()),
+///     "59021"
 /// );
 /// assert_eq!(
-///     geomagnetic_field.f().get::<gauss>(),
-///     0.59020674
+///     format!("{:.3}", geomagnetic_field.f().get::<gauss>()),
+///     "0.590"
 /// );
 ///
 /// // results can be formatted with unit abbreviation or full description
 /// assert_eq!(
 ///     format!("{:.2}", geomagnetic_field.f().into_format_args(nanotesla, Abbreviation)),
-///     "59020.68 nT"
+///     "59020.67 nT"
 /// );
 /// assert_eq!(
 ///     format!("{:.2}", geomagnetic_field.f().into_format_args(nanotesla, Description)),
-///     "59020.68 nanoteslas"
+///     "59020.67 nanoteslas"
+/// );
+/// assert_eq!(
+///     format!("{:.2}", geomagnetic_field.f().into_format_args(gauss, Abbreviation)),
+///     "0.59 G"
+/// );
+/// assert_eq!(
+///     format!("{:.2}", geomagnetic_field.f().into_format_args(gauss, Description)),
+///     "0.59 gauss"
 /// );
 /// #     Ok(())
 /// # }
 /// ```
+///
+/// # Serialization
+///
+/// With the `serde` feature, this type serializes the original query together
+/// with the public results:
+///
+/// - `height_m`, `latitude_deg`, `longitude_deg`, `date` (`YYYY-MM-DD`)
+/// - `x_nT`, `y_nT`, `z_nT`, `h_nT`, `f_nT`
+/// - `declination_deg`, `inclination_deg`
+/// - `declination_uncertainty_deg`, `inclination_uncertainty_deg`
+/// - `x_uncertainty_nT`, `y_uncertainty_nT`, `z_uncertainty_nT`,
+///   `h_uncertainty_nT`, `f_uncertainty_nT`
+/// - `declination_warning`, `grid_variation_deg` (`null` when undefined)
+///
+/// Deserialization reads only the query and calls [`GeomagneticField::new`],
+/// so output fields in the payload are ignored. Any serde format works; JSON and
+/// `postcard` are covered by the crate tests.
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(
+        try_from = "serde_support::GeomagneticFieldInput",
+        into = "serde_support::GeomagneticFieldView"
+    )
+)]
 pub struct GeomagneticField {
-    x: f32, // Northern component of the magnetic field vector
-    y: f32, // Eastern component of the magnetic field vector
-    z: f32, // Downward component of the magnetic field vector
+    x: f32,             // Northern component X [nT]
+    y: f32,             // Eastern component Y [nT]
+    z: f32,             // Downward component Z [nT]
+    height_m: f32,      // Height above the WGS 84 ellipsoid [m]
+    latitude_deg: f32,  // WGS 84 geodetic latitude [deg], for UPS grid variation
+    longitude_deg: f32, // WGS 84 geodetic longitude [deg], for UPS grid variation
+    date: Date,         // Evaluation date (selects the WMM epoch)
     #[cfg(test)]
-    x_rate: f32, // Yearly rate of change in the northern component
+    x_rate: f32, // Yearly rate of change in X [nT/year]
     #[cfg(test)]
-    y_rate: f32, // Yearly rate of change in the eastern component
+    y_rate: f32, // Yearly rate of change in Y [nT/year]
     #[cfg(test)]
-    z_rate: f32, // Yearly rate of change in the downward component
-    error_model: WmmErrorModel, // Values to calculate uncertainty
+    z_rate: f32, // Yearly rate of change in Z [nT/year]
+    error_model: WmmErrorModel, // [WMM2020 TR](https://doi.org/10.25923/ytk1-yx35) §3.4; [WMM2025 TR](https://doi.org/10.25923/prbc-s316) §3.4: σ_D is location-dependent; others are global RMS
 }
 
-/// Warning zone type, as defined in
-/// [World Magnetic Model Accuracy, Limitations, and Error Model](https://www.ncei.noaa.gov/products/world-magnetic-model/accuracy-limitations-error-model).
-#[derive(PartialEq, Debug)]
+/// Warning zone type, as defined in WMM2025 TR §1.8.
+#[derive(Debug, Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum WarningZone {
-    /// Based on the WMM military specification, “Blackout Zones” (BoZ) are areas around
+    /// Based on the WMM military specification, "Blackout Zones" (BoZ) are areas around
     /// the north and south magnetic poles where compasses are not accurate and should not be
     /// relied on for navigation. The BoZ are defined as regions around the north and south
-    /// magnetic poles where the horizontal intensity of Earth’s magnetic field (H) is less
+    /// magnetic poles where the horizontal intensity of Earth's magnetic field (H) is less
     /// than 2000 nT. In BoZs, WMM declination values are not accurate and compasses are
     /// unreliable.
     BlackoutZone,
-    /// “Caution Zone” (2000 nT <= H < 6000 nT) is area around the perimeter of the BoZs where
+    /// "Caution Zone" (2000 nT <= H < 6000 nT) is an area around the perimeter of the BoZs where
     /// compasses should be used with caution because they may not be fully accurate.
     CautionZone,
 }
 
 const MIN_HEIGHT_KM: f32 = -1.0;
 const MAX_HEIGHT_KM: f32 = 850.0;
+const MIN_LATITUDE_DEG: f32 = -90.0;
+const MAX_LATITUDE_DEG: f32 = 90.0;
+const MIN_LONGITUDE_DEG: f32 = -180.0;
+const MAX_LONGITUDE_DEG: f32 = 180.0;
+/// WMM2025 TR §1.8 \(\sigma_D\) clamp; declination cannot exceed \(180^\circ\).
+const MAX_DECLINATION_UNCERTAINTY_DEG: f32 = 180.0;
+/// Horizontal intensity \(H\) below which compasses are unreliable (WMM2025 TR §1.8 Blackout Zone).
+const BLACKOUT_ZONE_H_NT: f32 = 2000.0;
+/// Horizontal intensity \(H\) below which compasses should be used with caution (WMM2025 TR §1.8 Caution Zone).
+const CAUTION_ZONE_H_NT: f32 = 6000.0;
+/// \(\lvert\varphi\rvert\) at and beyond which UPS grid variation is defined
+/// ([NOAA WMM C](https://www.ncei.noaa.gov/products/world-magnetic-model) `MAG_PS_*_LAT_DEGREE`; [MIL-PRF-89500B](https://www.ncei.noaa.gov/sites/default/files/2025-09/MIL-PRF-89500B.pdf) uses a strict inequality).
+const GRID_VARIATION_MIN_ABS_LATITUDE_DEG: f32 = 55.0;
 
-// WGS84 ellipsoid parameters
-const A: f32 = 6378137.0; // Equation (8)
-                          // 6378137.0m Semi Major Axis (a) Equator to Center [m]
-const F: f32 = 1.0 / 298.25723; // Equation (8) // Flattening (f) = (a-b)/a
-                                // 6356752.3142m Semi Minor Axis (b) Pole to Center
-const E_2: f32 = F * (2.0 - F); // Equation (8)
-                                // Geomagnetic parameters
-const A2: f32 = 6371200.0; // Equation (4) // Geomagnetic Reference Radius
+// WGS 84 ellipsoid (WMM2025 TR §1.2)
+const WGS84_A: f32 = 6378137.0; // Semi-major axis a [m]
+const WGS84_F: f32 = (1.0_f64 / 298.257223563) as f32;
+const WGS84_E2: f32 = WGS84_F * (2.0 - WGS84_F); // First eccentricity squared
+
+// WMM geomagnetic reference radius a (WMM2025 TR §1.2)
+const WMM_A: f32 = 6371200.0;
+
+// NOAA WMM C `MAG_SummationSpecial` uses 1e-10 in double; f32 loses accuracy in Y'/sinθ
+// and P_n^m ~ sin^m θ well before that, so the polar path is taken sooner.
+const NEAR_POLE_SIN_THETA_MIN: f32 = 1e-3;
+
+/// Geodetic WGS 84 \((h, \varphi)\) to geocentric radius and direction sines/cosines.
+///
+/// # Arguments
+///
+/// * `height` - Height above the WGS 84 ellipsoid in meters.
+/// * `latitude` - WGS 84 geodetic latitude in radians.
+///
+/// # Returns
+///
+/// * `r` - Geocentric radius in meters
+/// * `cos_theta` - \(\cos\theta = \sin\varphi' = z/r\) (geocentric)
+/// * `sin_theta` - \(\sin\theta = \cos\varphi' = p/r\) (geocentric)
+/// * `sin_phi` / `cos_phi` - geodetic \(\sin\varphi\), \(\cos\varphi\)
+fn geodetic_to_geocentric(height: f32, latitude: f32) -> (f32, f32, f32, f32, f32) {
+    let sin_phi = sinf(latitude);
+    let cos_phi = cosf(latitude);
+    let r_c = WGS84_A / sqrtf(1.0 - WGS84_E2 * sin_phi * sin_phi); // prime vertical radius of curvature
+    let p = (r_c + height) * cos_phi; // geocentric cylindrical radius
+    let z = (r_c * (1.0 - WGS84_E2) + height) * sin_phi;
+    let r = sqrtf(p * p + z * z);
+    let cos_theta = z / r;
+    let sin_theta = p / r;
+    (r, cos_theta, sin_theta, sin_phi, cos_phi)
+}
+
+/// East \(Y\) together with φ'-based geocentric \(X'\), \(Z'\) (opposite sign vs
+/// WMM2025 TR §1.2 \(X'\), \(Z'\)). Near the geographic poles \(Y\) uses the finite
+/// \(P_n^1/\sin\theta\) recurrence instead of \(Y'/\sin\theta\).
+#[allow(clippy::too_many_arguments)]
+fn synthesize_geocentric_xyz(
+    cos_theta: f32,
+    sin_theta: f32,
+    lambda: f32,
+    ratio: f32,
+    g: &[f32; N_COEFF],
+    h: &[f32; N_COEFF],
+    g_dot: &[f32; N_COEFF],
+    h_dot: &[f32; N_COEFF],
+    time_delta: f32,
+) -> (f32, f32, f32) {
+    if sin_theta.abs() < NEAR_POLE_SIN_THETA_MIN {
+        synthesize_near_pole(
+            cos_theta, sin_theta, lambda, ratio, g, h, g_dot, h_dot, time_delta,
+        )
+    } else {
+        let (sin_m, cos_m) = sin_cos_m_lambda(lambda);
+        let (x_prime, y_prime, z_prime) = synthesize_xyz_prime(
+            cos_theta, sin_theta, &sin_m, &cos_m, ratio, g, h, g_dot, h_dot, time_delta,
+        );
+        (x_prime, y_prime / sin_theta, z_prime)
+    }
+}
 
 impl GeomagneticField {
     /// Calculates the geomagnetic field at a given location and date.
@@ -213,14 +382,15 @@ impl GeomagneticField {
     /// * `date` - Date for the WMM model evaluation.
     ///
     /// # Errors
-    /// When [GeomagneticField] cannot be calculated for given argumants, [error::Error] is returned.
+    /// When [GeomagneticField] cannot be calculated for given arguments, [error::Error] is returned.
     pub fn new(
         height: Length,
         latitude: Angle,
         longitude: Angle,
         date: Date,
     ) -> Result<Self, error::Error> {
-        if height < Length::new::<kilometer>(MIN_HEIGHT_KM)
+        if !height.get::<kilometer>().is_finite()
+            || height < Length::new::<kilometer>(MIN_HEIGHT_KM)
             || height > Length::new::<kilometer>(MAX_HEIGHT_KM)
         {
             return Err(HeightOutsideOfValidityRange {
@@ -229,127 +399,85 @@ impl GeomagneticField {
             });
         }
 
-        if latitude < Angle::new::<degree>(-90.0) || latitude > Angle::new::<degree>(90.0) {
+        if !latitude.get::<degree>().is_finite()
+            || latitude < Angle::new::<degree>(MIN_LATITUDE_DEG)
+            || latitude > Angle::new::<degree>(MAX_LATITUDE_DEG)
+        {
             return Err(InvalidLatitude);
         }
 
-        if longitude < Angle::new::<degree>(-180.0) || longitude > Angle::new::<degree>(180.0) {
+        if !longitude.get::<degree>().is_finite()
+            || longitude < Angle::new::<degree>(MIN_LONGITUDE_DEG)
+            || longitude > Angle::new::<degree>(MAX_LONGITUDE_DEG)
+        {
             return Err(InvalidLongitude);
         }
 
         let (wmm_model, wmm_error_model) = wmm_models::select_models(date)?;
 
-        let time_delta = date_to_year_decimal(date) - wmm_model.model_version as f32;
+        let time_delta = years_since_epoch(date, wmm_model.epoch_year);
 
-        // Translation of coordinates from geodetic to geocentric
-        let h = height.get::<meter>();
+        // Geodetic WGS 84 to geocentric spherical
+        let height_m = height.get::<meter>();
         let phi = latitude.get::<radian>();
         let lambda = longitude.get::<radian>();
-        let r_c = A / sqrtf(1.0 - E_2 * sinf(phi).powi(2)); // Equation (8)
-        let p = (r_c + h) * cosf(phi); // Equation (7)
-        let z = (r_c * (1.0 - E_2) + h) * sinf(phi); // Equation (7)
-        let r = sqrtf(p.powi(2) + z.powi(2)); // Equation (7)
-        let phi_prime = asinf(z / r); // Equation (7)
+        let (r, cos_theta, sin_theta, sin_phi, cos_phi) = geodetic_to_geocentric(height_m, phi);
 
-        let psn_sinphi = schmidt_semi_normalised_associated_legendre(sinf(phi_prime));
-
-        let mut g_t = [0.0; 90];
-        let mut h_t = [0.0; 90];
-        let mut dpsn_sinphi_dphi = [0.0; 90];
-
-        // Prepare matrices
-        for n in 1..=12 {
-            for m in 0..=n {
-                let ix = index(n, m);
-                g_t[ix] = wmm_model.g_mfc[ix] + time_delta * wmm_model.g_svc[ix]; // Equation (9): calculating Gauss coefficients for the desired time
-                h_t[ix] = wmm_model.h_mfc[ix] + time_delta * wmm_model.h_svc[ix]; // Equation (9): calculating Gauss coefficients for the desired time
-
-                dpsn_sinphi_dphi[ix] = ((n as f64 + 1.0) * tan(phi_prime as f64) * (psn_sinphi[ix] as f64) - // Equation (16): used to calculate the field vector components
-                    sqrt((n as f64 + 1.0).powi(2) - (m as f64).powi(2)) / cos(phi_prime as f64) * (psn_sinphi[index(n+1, m)] as f64))
-                    as f32;
-            }
-        }
-
-        // Field vector components
-        let mut x_prime = 0.0; // will be computed using Equation (10)
-        let mut y_prime = 0.0; // will be computed using Equation (11)
-        let mut z_prime = 0.0; // will be computed using Equation (12)
+        let ratio = WMM_A / r;
+        let (x_prime, y, z_prime) = synthesize_geocentric_xyz(
+            cos_theta,
+            sin_theta,
+            lambda,
+            ratio,
+            &wmm_model.g,
+            &wmm_model.h,
+            &wmm_model.g_dot,
+            &wmm_model.h_dot,
+            time_delta,
+        );
+        // Secular rates: pass \(\dot g,\dot h\) as the main field with zero epoch offset
+        // so the synthesizer returns \(\dot X',\dot Y,\dot Z'\) (Y is already east).
         #[cfg(test)]
-        let mut x_dot_prime = 0.0; // will be computed using Equation (13)
-        #[cfg(test)]
-        let mut y_dot_prime = 0.0; // will be computed using Equation (14)
-        #[cfg(test)]
-        let mut z_dot_prime = 0.0; // will be computed using Equation (15)
+        let (x_dot_prime, y_dot, z_dot_prime) = synthesize_geocentric_xyz(
+            cos_theta,
+            sin_theta,
+            lambda,
+            ratio,
+            &wmm_model.g_dot,
+            &wmm_model.h_dot,
+            &wmm_model.g_dot,
+            &wmm_model.h_dot,
+            0.0,
+        );
 
-        for n in 1..=12 {
-            let mut x_prime_tmp = 0.0;
-            let mut y_prime_tmp = 0.0;
-            let mut z_prime_tmp = 0.0;
-            #[cfg(test)]
-            let mut x_dot_prime_tmp = 0.0;
-            #[cfg(test)]
-            let mut y_dot_prime_tmp = 0.0;
-            #[cfg(test)]
-            let mut z_dot_prime_tmp = 0.0;
-
-            for m in 0..=n {
-                let ix = index(n, m);
-                x_prime_tmp += (g_t[ix] * cosf(m as f32 * lambda)
-                    + h_t[ix] * sinf(m as f32 * lambda))
-                    * dpsn_sinphi_dphi[ix];
-                y_prime_tmp += m as f32
-                    * (g_t[ix] * sinf(m as f32 * lambda) - h_t[ix] * cosf(m as f32 * lambda))
-                    * psn_sinphi[ix];
-                z_prime_tmp += (g_t[ix] * cosf(m as f32 * lambda)
-                    + h_t[ix] * sinf(m as f32 * lambda))
-                    * psn_sinphi[ix];
-                #[cfg(test)]
-                {
-                    x_dot_prime_tmp += (wmm_model.g_svc[ix] * cosf(m as f32 * lambda)
-                        + wmm_model.h_svc[ix] * sinf(m as f32 * lambda))
-                        * dpsn_sinphi_dphi[ix];
-                    y_dot_prime_tmp += m as f32
-                        * (wmm_model.g_svc[ix] * sinf(m as f32 * lambda)
-                            - wmm_model.h_svc[ix] * cosf(m as f32 * lambda))
-                        * psn_sinphi[ix];
-                    z_dot_prime_tmp += (wmm_model.g_svc[ix] * cosf(m as f32 * lambda)
-                        + wmm_model.h_svc[ix] * sinf(m as f32 * lambda))
-                        * psn_sinphi[ix];
-                }
-            }
-            let k_temp = (A2 / r).powi(n as i32 + 2);
-            x_prime += k_temp * x_prime_tmp;
-            y_prime += k_temp * y_prime_tmp;
-            z_prime += (n as f32 + 1.0) * k_temp * z_prime_tmp;
-
-            #[cfg(test)]
-            {
-                x_dot_prime += k_temp * x_dot_prime_tmp;
-                y_dot_prime += k_temp * y_dot_prime_tmp;
-                z_dot_prime += (n as f32 + 1.0) * k_temp * z_dot_prime_tmp;
-            }
-        }
-
-        let x = -x_prime * cosf(phi_prime - phi) + z_prime * sinf(phi_prime - phi);
-        let y = y_prime / cosf(phi_prime);
-        let z = -x_prime * sinf(phi_prime - phi) - z_prime * cosf(phi_prime - phi);
+        // Synthesis X', Z' equal -X'_TR, -Z'_TR (φ' vs θ). The minuses recover
+        // X = X'_TR cos(φ'−φ) − Z'_TR sin(φ'−φ), Z = X'_TR sin(φ'−φ) + Z'_TR cos(φ'−φ).
+        let sin_dphi = cos_theta * cos_phi - sin_theta * sin_phi;
+        let cos_dphi = sin_theta * cos_phi + cos_theta * sin_phi;
+        let x = -x_prime * cos_dphi + z_prime * sin_dphi;
+        let z = -x_prime * sin_dphi - z_prime * cos_dphi;
 
         #[cfg(test)]
-        let x_rate = -x_dot_prime * cosf(phi_prime - phi) + z_dot_prime * sinf(phi_prime - phi);
+        let x_rate = -x_dot_prime * cos_dphi + z_dot_prime * sin_dphi;
         #[cfg(test)]
-        let y_rate = y_dot_prime / cosf(phi_prime);
-        #[cfg(test)]
-        let z_rate = -x_dot_prime * sinf(phi_prime - phi) - z_dot_prime * cosf(phi_prime - phi);
+        let z_rate = -x_dot_prime * sin_dphi - z_dot_prime * cos_dphi;
+
+        let latitude_deg = latitude.get::<degree>();
+        let longitude_deg = longitude.get::<degree>();
 
         #[cfg(test)]
         let result = Self {
             x,
             y,
             z,
+            height_m,
+            latitude_deg,
+            longitude_deg,
+            date,
             x_rate,
-            y_rate,
+            y_rate: y_dot,
             z_rate,
-            error_model: wmm_error_model.clone(),
+            error_model: *wmm_error_model,
         };
 
         #[cfg(not(test))]
@@ -357,73 +485,122 @@ impl GeomagneticField {
             x,
             y,
             z,
-            error_model: wmm_error_model.clone(),
+            height_m,
+            latitude_deg,
+            longitude_deg,
+            date,
+            error_model: *wmm_error_model,
         };
 
         Ok(result)
     }
 
-    /// Angle between the magnetic flux density (magnetic field) B vector and true north, positive east.
+    /// Magnetic declination \(D\): angle from true north to the horizontal
+    /// component of B, positive east (WMM2025 TR §1.1.1).
     pub fn declination(&self) -> Angle {
         Angle::new::<radian>(atan2f(self.y, self.x))
     }
 
-    /// Global average error of declination.
-    pub fn declination_uncertainty(&self) -> Angle {
-        let constant_error = self.error_model.declination_constant_error_factor;
-        let variable_error =
-            self.error_model.declination_variable_error_factor / self.h().get::<nanotesla>();
-        let uncertainty = sqrtf((constant_error).powi(2) + variable_error.powi(2));
+    /// Grid variation (grivation) relative to UPS grid north, or `None`
+    /// outside the polar regions.
+    ///
+    /// Near the geographic poles \(D\) changes rapidly with longitude, so WMM
+    /// defines an auxiliary angle against Universal Polar Stereographic (UPS)
+    /// grid north (MIL-PRF-89500B §A.2.6):
+    ///
+    /// ```text
+    /// GV = D − λ    for φ ≥ 55°
+    /// GV = D + λ    for φ ≤ −55°
+    /// ```
+    ///
+    /// \(\varphi\) and \(\lambda\) are geodetic latitude and longitude.
+    /// The result is wrapped to \([-180^\circ, 180^\circ]\). Mid-latitudes
+    /// return `None`; this crate does not compute UTM grivation (only UPS).
+    pub fn grid_variation(&self) -> Option<Angle> {
+        let gv = if self.latitude_deg >= GRID_VARIATION_MIN_ABS_LATITUDE_DEG {
+            self.declination().get::<degree>() - self.longitude_deg
+        } else if self.latitude_deg <= -GRID_VARIATION_MIN_ABS_LATITUDE_DEG {
+            self.declination().get::<degree>() + self.longitude_deg
+        } else {
+            return None;
+        };
+        Some(Angle::new::<degree>(wrap_to_180(gv)))
+    }
 
-        if uncertainty < 180.0 {
+    /// Location-dependent 1σ uncertainty of declination (WMM2020 TR §3.4; WMM2025 TR §3.4).
+    ///
+    /// ```text
+    /// σ_D = √(σ_c² + (σ_v / H)²)
+    /// ```
+    ///
+    /// `σ_c` and `σ_v` are epoch constants of the selected WMM;
+    /// `H` is the local horizontal intensity. The result is clamped to 180°.
+    ///
+    /// Unlike the other `*_uncertainty` methods, this is not a global RMS:
+    /// it grows as `H` decreases (near the magnetic poles).
+    pub fn declination_uncertainty(&self) -> Angle {
+        let sigma_c = self.error_model.declination_sigma_c;
+        let sigma_v = self.error_model.declination_sigma_v / self.h().get::<nanotesla>();
+        let uncertainty = sqrtf(sigma_c.powi(2) + sigma_v.powi(2));
+
+        if uncertainty < MAX_DECLINATION_UNCERTAINTY_DEG {
             return Angle::new::<degree>(uncertainty);
         }
-        Angle::new::<degree>(180.0)
+        Angle::new::<degree>(MAX_DECLINATION_UNCERTAINTY_DEG)
     }
 
     /// Possible declination warning.
-    /// [WarningZone::BlackoutZone] is area around the magnetic pole where
+    /// [WarningZone::BlackoutZone] is an area around the magnetic pole where
     /// compasses are not accurate and should not be relied on for navigation.
-    /// [WarningZone::CautionZone] is area where
+    /// [WarningZone::CautionZone] is an area where
     /// compasses should be used with caution because they may not be fully accurate.
+    #[must_use]
     pub fn declination_warning(&self) -> Option<WarningZone> {
-        if self.h() < MagneticFluxDensity::new::<nanotesla>(2000.0) {
+        if self.h() < MagneticFluxDensity::new::<nanotesla>(BLACKOUT_ZONE_H_NT) {
             Some(WarningZone::BlackoutZone)
-        } else if self.h() < MagneticFluxDensity::new::<nanotesla>(6000.0) {
+        } else if self.h() < MagneticFluxDensity::new::<nanotesla>(CAUTION_ZONE_H_NT) {
             Some(WarningZone::CautionZone)
         } else {
             None
         }
     }
 
-    /// Angle between the magnetic flux density (magnetic field) B vector and the horizontal plane, positive down.
+    /// Magnetic inclination \(I\): angle between the horizontal plane and B,
+    /// positive down (WMM2025 TR §1.1.1).
     pub fn inclination(&self) -> Angle {
         Angle::new::<radian>(atan2f(self.z, self.h().get::<nanotesla>()))
     }
 
-    /// Global average error of inclination.
+    /// Global RMS (1σ) uncertainty of inclination (WMM2020 TR §3.4; WMM2025 TR §3.4).
+    ///
+    /// Constant for the selected WMM epoch; does not depend on location.
     pub fn inclination_uncertainty(&self) -> Angle {
         Angle::new::<degree>(self.error_model.inclination_uncertainty)
     }
 
-    /// Horizontal magnetic flux density (magnetic field) B strength.
+    /// Horizontal intensity \(H\): magnitude of the horizontal component of B
+    /// (not the Gauss coefficient \(h_n^m\)).
     pub fn h(&self) -> MagneticFluxDensity {
         MagneticFluxDensity::new::<nanotesla>(sqrtf(self.x.powi(2) + self.y.powi(2)))
     }
 
-    /// Global average error of horizontal magnetic flux density (magnetic field) B strength.
+    /// Global RMS (1σ) uncertainty of horizontal intensity H (WMM2020 TR §3.4; WMM2025 TR §3.4).
+    ///
+    /// Constant for the selected WMM epoch; does not depend on location.
     pub fn h_uncertainty(&self) -> MagneticFluxDensity {
         MagneticFluxDensity::new::<nanotesla>(self.error_model.h_uncertainty)
     }
 
-    /// Geomagnetic flux density (magnetic field) B strength.
+    /// Total intensity \(F\): magnitude of the magnetic flux density (magnetic field) B.
     pub fn f(&self) -> MagneticFluxDensity {
         MagneticFluxDensity::new::<nanotesla>(sqrtf(
             self.h().get::<nanotesla>().powi(2) + self.z.powi(2),
         ))
     }
 
-    /// Global average error of geomagnetic flux density (magnetic field) B strength.
+    /// Global RMS (1σ) uncertainty of total intensity F (WMM2020 TR §3.4; WMM2025 TR §3.4).
+    ///
+    /// Constant for the selected WMM epoch; does not depend on location.
     pub fn f_uncertainty(&self) -> MagneticFluxDensity {
         MagneticFluxDensity::new::<nanotesla>(self.error_model.f_uncertainty)
     }
@@ -433,7 +610,9 @@ impl GeomagneticField {
         MagneticFluxDensity::new::<nanotesla>(self.x)
     }
 
-    /// Global average error of northern component of the magnetic flux density (magnetic field) B vector.
+    /// Global RMS (1σ) uncertainty of the northern component X (WMM2020 TR §3.4; WMM2025 TR §3.4).
+    ///
+    /// Constant for the selected WMM epoch; does not depend on location.
     pub fn x_uncertainty(&self) -> MagneticFluxDensity {
         MagneticFluxDensity::new::<nanotesla>(self.error_model.x_uncertainty)
     }
@@ -443,7 +622,9 @@ impl GeomagneticField {
         MagneticFluxDensity::new::<nanotesla>(self.y)
     }
 
-    /// Global average error of eastern component of the magnetic flux density (magnetic field) B vector.
+    /// Global RMS (1σ) uncertainty of the eastern component Y (WMM2020 TR §3.4; WMM2025 TR §3.4).
+    ///
+    /// Constant for the selected WMM epoch; does not depend on location.
     pub fn y_uncertainty(&self) -> MagneticFluxDensity {
         MagneticFluxDensity::new::<nanotesla>(self.error_model.y_uncertainty)
     }
@@ -453,7 +634,9 @@ impl GeomagneticField {
         MagneticFluxDensity::new::<nanotesla>(self.z)
     }
 
-    /// Global average error of downward component of the magnetic flux density (magnetic field) B vector.
+    /// Global RMS (1σ) uncertainty of the downward component Z (WMM2020 TR §3.4; WMM2025 TR §3.4).
+    ///
+    /// Constant for the selected WMM epoch; does not depend on location.
     pub fn z_uncertainty(&self) -> MagneticFluxDensity {
         MagneticFluxDensity::new::<nanotesla>(self.error_model.z_uncertainty)
     }
@@ -473,13 +656,13 @@ impl GeomagneticField {
         .to_degrees()
     }
 
-    /// Yearly rate of change in horizontal field strength
+    /// Yearly rate of change in horizontal intensity \(H\)
     #[cfg(test)]
     fn h_rate(&self) -> f32 {
         (self.x * self.x_rate + self.y * self.y_rate) / self.h().get::<nanotesla>()
     }
 
-    /// Yearly rate of change in Magnetic field strength
+    /// Yearly rate of change in total intensity F
     #[cfg(test)]
     fn f_rate(&self) -> f32 {
         (self.x * self.x_rate + self.y * self.y_rate + self.z * self.z_rate)
@@ -505,461 +688,29 @@ impl GeomagneticField {
     }
 }
 
-/// Function to calculate a decimal year for a given date.
-fn date_to_year_decimal(date: Date) -> f32 {
-    date.year() as f32
+/// Wrap an angle in degrees to \([-180^\circ, 180^\circ]\) (legacy NOAA WMM C `geomag.c`).
+fn wrap_to_180(deg: f32) -> f32 {
+    if deg > 180.0 {
+        deg - 360.0
+    } else if deg < -180.0 {
+        deg + 360.0
+    } else {
+        deg
+    }
+}
+
+/// Offset \(t-t_0\) in years (WMM2025 TR §1.2).
+///
+/// Integer year offset plus the day fraction, so the sum stays \(O(1)\) and
+/// `f32` keeps ~\(10^{-5}\) day. Forming the calendar year first (e.g. `2024.945`)
+/// then subtracting \(t_0\) loses ~0.02 day to the ULP of ~2025.
+fn years_since_epoch(date: Date, epoch_year: i32) -> f32 {
+    (date.year() - epoch_year) as f32
         + (date.ordinal() - 1) as f32 / (time::util::days_in_year(date.year()) as f32)
 }
 
 #[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-mod tests {
-    extern crate std;
-    use super::*;
-    use rstest::rstest;
-    use time::Month::*;
+mod tests;
 
-    #[rstest]
-    #[case("ncei.noaa.gov/WMM2020_TestValues.txt")]
-    #[case("ncei.noaa.gov/WMM2025_TestValues.txt")]
-    fn wmm_tests(#[case] test_file: &str) {
-        use assert_float_eq::{assert_float_absolute_eq, assert_float_relative_eq};
-        use std::fs::File;
-        use std::io::{BufRead, BufReader};
-        use std::path::Path;
-
-        let test_values_file =
-            File::open(Path::new(test_file)).expect("Test values file not found!");
-        let test_values_lines = BufReader::new(test_values_file).lines();
-
-        for line in test_values_lines {
-            match line {
-                Ok(content) => {
-                    if content.trim().starts_with("#") {
-                        continue;
-                    }
-
-                    let mut elements = content.split_whitespace();
-                    let date: f32 = elements
-                        .next()
-                        .expect("Lack of date!")
-                        .parse()
-                        .expect("Unable to parse date!");
-                    let height: f32 = elements
-                        .next()
-                        .expect("Lack of height!")
-                        .parse()
-                        .expect("Unable to parse height!");
-                    let lat: f32 = elements
-                        .next()
-                        .expect("Lack of lat!")
-                        .parse()
-                        .expect("Unable to parse lat!");
-                    let lon: f32 = elements
-                        .next()
-                        .expect("Lack of lon!")
-                        .parse()
-                        .expect("Unable to parse lon!");
-                    let declination: f32 = elements
-                        .next()
-                        .expect("Lack of declination!")
-                        .parse()
-                        .expect("Unable to parse declination!");
-                    let inclination: f32 = elements
-                        .next()
-                        .expect("Lack of inclination!")
-                        .parse()
-                        .expect("Unable to parse inclination!");
-                    let h: f32 = elements
-                        .next()
-                        .expect("Lack of h!")
-                        .parse()
-                        .expect("Unable to parse h!");
-                    let x: f32 = elements
-                        .next()
-                        .expect("Lack of x!")
-                        .parse()
-                        .expect("Unable to parse x!");
-                    let y: f32 = elements
-                        .next()
-                        .expect("Lack of y!")
-                        .parse()
-                        .expect("Unable to parse y!");
-                    let z: f32 = elements
-                        .next()
-                        .expect("Lack of z!")
-                        .parse()
-                        .expect("Unable to parse z!");
-                    let f: f32 = elements
-                        .next()
-                        .expect("Lack of f!")
-                        .parse()
-                        .expect("Unable to parse f!");
-                    let dd_dt: f32 = elements
-                        .next()
-                        .expect("Lack of dd_dt!")
-                        .parse()
-                        .expect("Unable to parse dd_dt!");
-                    let di_dt: f32 = elements
-                        .next()
-                        .expect("Lack of di_dt!")
-                        .parse()
-                        .expect("Unable to parse di_dt!");
-                    let dh_dt: f32 = elements
-                        .next()
-                        .expect("Lack of dh_dt!")
-                        .parse()
-                        .expect("Unable to parse dh_dt!");
-                    let dx_dt: f32 = elements
-                        .next()
-                        .expect("Lack of dx_dt!")
-                        .parse()
-                        .expect("Unable to parse dx_dt!");
-                    let dy_dt: f32 = elements
-                        .next()
-                        .expect("Lack of dy_dt!")
-                        .parse()
-                        .expect("Unable to parse dy_dt!");
-                    let dz_dt: f32 = elements
-                        .next()
-                        .expect("Lack of dz_dt!")
-                        .parse()
-                        .expect("Unable to parse dz_dt!");
-                    let df_dt: f32 = elements
-                        .next()
-                        .expect("Lack of df_dt!")
-                        .parse()
-                        .expect("Unable to parse df_dt!");
-
-                    let result = GeomagneticField::new(
-                        Length::new::<kilometer>(height),
-                        Angle::new::<degree>(lat),
-                        Angle::new::<degree>(lon),
-                        year_decimal_to_date(date),
-                    )
-                    .unwrap();
-
-                    assert_float_relative_eq!(
-                        declination,
-                        result.declination().get::<degree>(),
-                        0.04
-                    );
-                    assert_float_absolute_eq!(
-                        declination,
-                        result.declination().get::<degree>(),
-                        0.02
-                    );
-
-                    assert_float_relative_eq!(
-                        inclination,
-                        result.inclination().get::<degree>(),
-                        0.0009
-                    );
-                    assert_float_absolute_eq!(
-                        inclination,
-                        result.inclination().get::<degree>(),
-                        0.01
-                    );
-
-                    assert_float_relative_eq!(h, result.h().get::<nanotesla>(), 0.0001);
-                    assert_float_absolute_eq!(h, result.h().get::<nanotesla>(), 1.0);
-
-                    assert_float_relative_eq!(x, result.x().get::<nanotesla>(), 0.002);
-                    assert_float_absolute_eq!(x, result.x().get::<nanotesla>(), 1.0);
-
-                    assert_float_relative_eq!(y, result.y().get::<nanotesla>(), 0.0013);
-                    assert_float_absolute_eq!(y, result.y().get::<nanotesla>(), 1.0);
-
-                    assert_float_relative_eq!(z, result.z().get::<nanotesla>(), 0.00005);
-                    assert_float_absolute_eq!(z, result.z().get::<nanotesla>(), 1.0);
-
-                    assert_float_relative_eq!(f, result.f().get::<nanotesla>(), 0.04);
-                    assert_float_absolute_eq!(f, result.f().get::<nanotesla>(), 1.0);
-
-                    assert_float_absolute_eq!(dd_dt, result.declination_rate(), 0.1);
-
-                    assert_float_absolute_eq!(di_dt, result.inclination_rate(), 0.1);
-
-                    assert_float_absolute_eq!(dh_dt, result.h_rate(), 0.1);
-
-                    assert_float_relative_eq!(dx_dt, result.x_rate(), 0.05);
-                    assert_float_absolute_eq!(dx_dt, result.x_rate(), 0.1);
-
-                    assert_float_relative_eq!(dy_dt, result.y_rate(), 0.09);
-                    assert_float_absolute_eq!(dy_dt, result.y_rate(), 0.1);
-
-                    assert_float_relative_eq!(dz_dt, result.z_rate(), 0.02);
-                    assert_float_absolute_eq!(dz_dt, result.z_rate(), 0.1);
-
-                    assert_float_relative_eq!(df_dt, result.f_rate(), 0.02);
-                    assert_float_absolute_eq!(df_dt, result.f_rate(), 0.1);
-                }
-
-                Err(error) => {
-                    panic!("Error reading lines: {}!", error)
-                }
-            }
-        }
-    }
-
-    #[rstest]
-    #[case(2023, 15, 0.006997449, 0.21, 145.0, 128.0, 131.0, 94.0, 157.0)]
-    #[case(2028, 15, 0.006838081, 0.20, 138.0, 133.0, 137.0, 89.0, 141.0)]
-    fn test_uncertainty(
-        #[case] year: i32,
-        #[case] day: u16,
-        #[case] declination_uncertainty: f32,
-        #[case] inclination_uncertainty: f32,
-        #[case] f_uncertainty: f32,
-        #[case] h_uncertainty: f32,
-        #[case] x_uncertainty: f32,
-        #[case] y_uncertainty: f32,
-        #[case] z_uncertainty: f32,
-    ) {
-        let result = GeomagneticField::new(
-            Length::new::<meter>(100.0),
-            Angle::new::<degree>(54.0),
-            Angle::new::<degree>(-13.0),
-            Date::from_ordinal_date(year, day).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            result.declination_uncertainty(),
-            Angle::new::<radian>(declination_uncertainty)
-        );
-        assert_eq!(
-            result.inclination_uncertainty(),
-            Angle::new::<degree>(inclination_uncertainty)
-        );
-        assert_eq!(
-            result.f_uncertainty(),
-            MagneticFluxDensity::new::<nanotesla>(f_uncertainty)
-        );
-        assert_eq!(
-            result.h_uncertainty(),
-            MagneticFluxDensity::new::<nanotesla>(h_uncertainty)
-        );
-        assert_eq!(
-            result.x_uncertainty(),
-            MagneticFluxDensity::new::<nanotesla>(x_uncertainty)
-        );
-        assert_eq!(
-            result.y_uncertainty(),
-            MagneticFluxDensity::new::<nanotesla>(y_uncertainty)
-        );
-        assert_eq!(
-            result.z_uncertainty(),
-            MagneticFluxDensity::new::<nanotesla>(z_uncertainty)
-        );
-    }
-
-    #[rstest]
-    #[case(-90.0, 180.0)]
-    #[case(-89.999, 180.0)]
-    #[case(-89.99, 180.0)]
-    #[case(-89.9, 0.42294145)]
-    #[case(-89.0, 0.41796952)]
-    #[case(-45.0, 0.5829365)]
-    #[case(0.0, 0.33038762)]
-    #[case(45.0, 0.35611528)]
-    #[case(89.0, 2.4860976)]
-    #[case(89.9, 3.1008945)]
-    #[case(89.99, 180.0)]
-    #[case(89.999, 180.0)]
-    #[case(90.0, 180.0)]
-    fn test_declination_uncertainty(#[case] latitude: f32, #[case] expected_uncertainty: f32) {
-        let result = GeomagneticField::new(
-            Length::new::<meter>(100.0),
-            Angle::new::<degree>(latitude),
-            Angle::new::<degree>(0.0),
-            Date::from_ordinal_date(2023, 15).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            result.declination_uncertainty().get::<degree>(),
-            expected_uncertainty
-        );
-    }
-
-    #[rstest]
-    #[case(-90.0, Some(WarningZone::BlackoutZone))]
-    #[case(-89.9, None)]
-    #[case(-75.0, None)]
-    #[case(-70.0, Some(WarningZone::CautionZone))]
-    #[case(-65.0, Some(WarningZone::BlackoutZone))]
-    #[case(-60.0, Some(WarningZone::CautionZone))]
-    #[case(-55.0, None)]
-    #[case(0.0, None)]
-    #[case(70.0, None)]
-    #[case(80.0, Some(WarningZone::CautionZone))]
-    #[case(85.0, Some(WarningZone::BlackoutZone))]
-    #[case(90.0, Some(WarningZone::BlackoutZone))]
-    fn test_declination_warning(#[case] latitude: f32, #[case] warning: Option<WarningZone>) {
-        let result = GeomagneticField::new(
-            Length::new::<meter>(100.0),
-            Angle::new::<degree>(latitude),
-            Angle::new::<degree>(135.0),
-            Date::from_ordinal_date(2023, 15).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(result.declination_warning(), warning);
-    }
-
-    #[rstest]
-    #[case(-91.0)]
-    #[case(-90.1)]
-    #[case(-90.00001)]
-    #[case(90.00001)]
-    #[case(90.1)]
-    #[case(91.0)]
-    fn test_invalid_latitude(#[case] latitude: f32) {
-        let result = GeomagneticField::new(
-            Length::new::<meter>(100.0),
-            Angle::new::<degree>(latitude),
-            Angle::new::<degree>(0.0),
-            Date::from_ordinal_date(2023, 15).unwrap(),
-        );
-        assert!(result.is_err_and(|e| e == InvalidLatitude));
-    }
-
-    #[rstest]
-    #[case(-181.0)]
-    #[case(-180.1)]
-    #[case(-180.00001)]
-    #[case(180.00001)]
-    #[case(180.1)]
-    #[case(181.0)]
-    fn test_invalid_longitude(#[case] longitude: f32) {
-        let result = GeomagneticField::new(
-            Length::new::<meter>(100.0),
-            Angle::new::<degree>(0.0),
-            Angle::new::<degree>(longitude),
-            Date::from_ordinal_date(2023, 15).unwrap(),
-        );
-        assert!(result.is_err_and(|e| e == InvalidLongitude));
-    }
-
-    #[rstest]
-    #[case(-101.0)]
-    #[case(-100.1)]
-    #[case(-100.0001)]
-    #[case(850.001)]
-    #[case(850.1)]
-    #[case(851.0)]
-    fn test_height_outside_of_validity_range(#[case] height: f32) {
-        let result = GeomagneticField::new(
-            Length::new::<kilometer>(height),
-            Angle::new::<degree>(0.0),
-            Angle::new::<degree>(0.0),
-            Date::from_ordinal_date(2023, 15).unwrap(),
-        );
-        assert!(result.is_err_and(|e| e
-            == HeightOutsideOfValidityRange {
-                min_height_km: -1.0,
-                max_height_km: 850.0
-            }));
-    }
-
-    #[rstest]
-    #[case(-1.0, -90.0, -180.0)]
-    #[case(850.0, 90.0, 180.0)]
-    fn test_validity_range(#[case] height: f32, #[case] latitude: f32, #[case] longitude: f32) {
-        let result = GeomagneticField::new(
-            Length::new::<kilometer>(height),
-            Angle::new::<degree>(latitude),
-            Angle::new::<degree>(longitude),
-            Date::from_ordinal_date(2023, 15).unwrap(),
-        );
-        assert!(result.is_ok());
-    }
-
-    #[rstest]
-    #[case(1918, January, 1)]
-    #[case(2019, December, 31)]
-    #[case(2030, January, 1)]
-    #[case(2229, December, 31)]
-    fn test_date_outside_validity_range(
-        #[case] year: i32,
-        #[case] month: time::Month,
-        #[case] day: u8,
-    ) {
-        use error::Error::DateOutsideOfValidityRange;
-
-        let result = GeomagneticField::new(
-            Length::new::<kilometer>(0.0),
-            Angle::new::<degree>(0.0),
-            Angle::new::<degree>(0.0),
-            Date::from_calendar_date(year, month, day).unwrap(),
-        );
-        assert!(result.is_err_and(|e| e == DateOutsideOfValidityRange));
-    }
-
-    #[rstest]
-    #[case(2020, January, 1)]
-    #[case(2024, December, 31)]
-    #[case(2025, January, 1)]
-    #[case(2029, December, 31)]
-    fn test_date_validity_range(#[case] year: i32, #[case] month: time::Month, #[case] day: u8) {
-        let result = GeomagneticField::new(
-            Length::new::<kilometer>(0.0),
-            Angle::new::<degree>(0.0),
-            Angle::new::<degree>(0.0),
-            Date::from_calendar_date(year, month, day).unwrap(),
-        );
-        assert!(result.is_ok());
-    }
-
-    fn year_decimal_to_date(year_decimal: f32) -> Date {
-        let year_int = year_decimal as i32;
-        let day_ordinal =
-            f32::round(year_decimal.fract() * time::util::days_in_year(year_int) as f32);
-        Date::from_ordinal_date(year_int, day_ordinal as u16 + 1).unwrap()
-    }
-
-    #[rstest]
-    #[case(2020, July, 2, 2020.5)]
-    #[case(2021, July, 3, 2021.5013)]
-    #[case(2023, January, 1, 2023.0)]
-    #[case(2023, January, 2, 2023.0027)]
-    #[case(2024, January, 2, 2024.0027)]
-    #[case(2024, December, 12, 2024.9453)]
-    #[case(2024, December, 31, 2024.9973)]
-    #[case(2025, January, 1, 2025.0)]
-    fn test_year_decimal_conversions(
-        #[case] year_int: i32,
-        #[case] month: time::Month,
-        #[case] day: u8,
-        #[case] year_decimal: f32,
-    ) {
-        assert_eq!(
-            date_to_year_decimal(Date::from_calendar_date(year_int, month, day).unwrap()),
-            year_decimal
-        );
-        assert_eq!(
-            year_decimal_to_date(year_decimal),
-            Date::from_calendar_date(year_int, month, day).unwrap()
-        );
-        assert_eq!(
-            date_to_year_decimal(year_decimal_to_date(year_decimal)),
-            year_decimal
-        );
-        assert_eq!(
-            year_decimal_to_date(date_to_year_decimal(
-                Date::from_calendar_date(year_int, month, day).unwrap()
-            )),
-            Date::from_calendar_date(year_int, month, day).unwrap()
-        );
-    }
-
-    #[test]
-    fn test_send() {
-        fn assert_send<T: Send>() {}
-        assert_send::<GeomagneticField>();
-    }
-
-    #[test]
-    fn test_sync() {
-        fn assert_sync<T: Sync>() {}
-        assert_sync::<GeomagneticField>();
-    }
-}
+#[cfg(test)]
+mod property_tests;

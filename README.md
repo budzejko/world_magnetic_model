@@ -6,9 +6,26 @@ a mathematical representation of the Earth's core magnetic field and its tempora
 The crate's interface utilizes the [uom (Units of Measurement) crate](https://docs.rs/uom/latest/uom/) to represent physical quantities
 accurately. WMM coefficient files are converted into code constants to eliminate the need for file reading at runtime.
 This crate is compatible with `no_std` environments, meaning it does not depend on the Rust standard library and can be used in embedded,
-bare-metal, or other restricted contexts by relying on the core crate instead. The implemented models include `WMM2020` and `WMM2025`.
+bare-metal, or other restricted contexts by relying on the core crate instead.
+
+## Bundled models
+
+Each release ships two consecutive WMM coefficient sets (currently 2020 and 2025),
+selected automatically from the evaluation date. A successor model is published while
+the current epoch is still in force. Keeping both the outgoing and incoming sets in
+the crate lets embedded firmware reserve a constant footprint for coefficients: an
+update that replaces the older epoch with the newly published one does not grow the
+image, and devices already carry the next model when the epoch boundary arrives.
+
+Crate versions follow `api.epoch.patch`, where `epoch` is the year of the newest
+bundled WMM model.
 
 ## Usage
+
+Results are shown as \(D \pm \sigma_D\) (1σ). Field accuracy is the
+[WMM error model](https://www.ncei.noaa.gov/products/world-magnetic-model/accuracy-limitations-error-model),
+not the `f32` precision.
+
 ```rust
 let geomagnetic_field = GeomagneticField::new(
     Length::new::<meter>(100.0), // Height above the WGS 84 ellipsoid
@@ -17,14 +34,31 @@ let geomagnetic_field = GeomagneticField::new(
     Date::from_ordinal_date(2029, 15)? // Date (15th day of 2029)
 )?;
 
-assert_eq!(
-    geomagnetic_field.declination().get::<degree>(),
-    -0.17367662
-);
-assert_eq!(
-    geomagnetic_field.declination_uncertainty().get::<degree>(),
-    0.32549456
-);
+let d = geomagnetic_field.declination().get::<degree>();
+let sigma = geomagnetic_field.declination_uncertainty().get::<degree>();
+
+assert_eq!(format!("{d:.2} ± {sigma:.2}°"), "-0.17 ± 0.33°");
+```
+
+## Cargo features
+
+Enable **`serde`** for `Serialize`/`Deserialize` on [`GeomagneticField`] and
+[`WarningZone`]. `GeomagneticField` encodes the constructor query plus public
+results (declination, intensity, warning, …). Deserialization uses the
+inputs only and recomputes through [`GeomagneticField::new`]. Enabling
+`serde` does not pull in `std`. Encode with any serde codec, for example
+`serde_json` or `postcard`.
+
+```rust
+let json = serde_json::to_string(&geomagnetic_field)?;
+let from_json: GeomagneticField = serde_json::from_str(&json)?;
+
+let mut buf = [0u8; 256];
+let bytes = postcard::to_slice(&geomagnetic_field, &mut buf)?;
+let from_postcard: GeomagneticField = postcard::from_bytes(bytes)?;
+
+assert_eq!(geomagnetic_field.declination(), from_json.declination());
+assert_eq!(geomagnetic_field.declination(), from_postcard.declination());
 ```
 
 ## World Magnetic Model
@@ -51,7 +85,7 @@ to copyright protection.
 The WMM model and associated data files are produced by the U.S. Government and are not subject to copyright.
 
 ## Credit
-This work was inspired from [geomag-wmm](https://git.hostux.fr/ConstellationVFR/geomag-wmm).
+This work was inspired by [geomag-wmm](https://crates.io/crates/geomag-wmm/0.1.0).
 
 ## License
 Licensed under either of [Apache License, Version 2.0](https://github.com/budzejko/world_magnetic_model/blob/main/LICENSE-APACHE)
